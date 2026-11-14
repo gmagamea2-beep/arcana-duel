@@ -1,0 +1,1054 @@
+extends Control
+## 대전 화면 (나 = 0번, AI = 1번).
+## 조작은 탭/클릭: 카드를 누르면 오른쪽 아래에 자세히 보기 + 행동 버튼이 나온다.
+
+signal exit_to_menu
+signal restart_requested
+
+const Art = preload("res://ui/art.gd")
+const CardDB = preload("res://core/card_db.gd")
+const Game = preload("res://core/game.gd")
+const AI = preload("res://ai/simple_ai.gd")
+const CardView = preload("res://ui/card_view.gd")
+const HeroView = preload("res://ui/hero_view.gd")
+const PlayerState = preload("res://core/player_state.gd")
+const CardInst = preload("res://core/card_inst.gd")
+
+const ME := 0
+const OP := 1
+const RIGHT_W := 480
+const AI_DELAY := 0.7
+
+var my_hero := "fire"
+var op_hero := "steel"
+var ai_level := 1
+
+var game: Game
+var ai: AI
+
+var op_hero_view: HeroView
+var me_hero_view: HeroView
+var op_info: Label
+var me_info: Label
+var op_traps_box: HBoxContainer
+var me_traps_box: HBoxContainer
+var op_board: HBoxContainer
+var me_board: HBoxContainer
+var field_slot: HBoxContainer
+var turn_label: Label
+var hand_area: Control
+var power_btn: Button
+var end_btn: Button
+var refresh_btn: Button
+var market_box: VBoxContainer
+var detail_holder: CenterContainer
+var detail_actions: VBoxContainer
+var log_label: RichTextLabel
+var fx_layer: Control
+var overlay: Control
+var hint_label: Label
+var left_area: VBoxContainer
+
+var busy := false
+var sel: Dictionary = {}
+var targeting: Dictionary = {}
+var mull_marks: Dictionary = {}
+var _run_id := 0
+var _pending_fx: Array = []
+var _pos_cache: Dictionary = {}
+var _hint_id := 0
+var _over_shown := false
+
+
+func _ready() -> void:
+	mouse_filter = Control.MOUSE_FILTER_STOP
+	_build()
+	_start_game()
+
+
+# ─────────────────────────────── 화면 구성 ───────────────────────────────
+
+func _build() -> void:
+	var bg := ColorRect.new()
+	bg.color = Art.COL_BG
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(bg)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var margin := MarginContainer.new()
+	for side in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, 12)
+	margin.mouse_filter = Control.MOUSE_FILTER_PASS
+	add_child(margin)
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var root := HBoxContainer.new()
+	root.add_theme_constant_override("separation", 12)
+	root.mouse_filter = Control.MOUSE_FILTER_PASS
+	margin.add_child(root)
+
+	# ── 왼쪽: 전장 ──
+	left_area = VBoxContainer.new()
+	left_area.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	left_area.add_theme_constant_override("separation", 6)
+	left_area.mouse_filter = Control.MOUSE_FILTER_PASS
+	root.add_child(left_area)
+
+	var op_bar := _bar()
+	left_area.add_child(op_bar)
+	op_hero_view = HeroView.new()
+	op_hero_view.pressed.connect(_on_hero_pressed.bind(OP))
+	op_bar.add_child(op_hero_view)
+	op_info = _label("", 20, Art.COL_SUB)
+	op_bar.add_child(op_info)
+	op_bar.add_child(_spacer())
+	op_bar.add_child(_label("함정", 18, Art.COL_SUB))
+	op_traps_box = HBoxContainer.new()
+	op_traps_box.add_theme_constant_override("separation", 6)
+	op_bar.add_child(op_traps_box)
+
+	op_board = _board_row()
+	left_area.add_child(op_board)
+
+	var mid := HBoxContainer.new()
+	mid.alignment = BoxContainer.ALIGNMENT_CENTER
+	mid.custom_minimum_size = Vector2(0, 112)
+	mid.add_theme_constant_override("separation", 40)
+	mid.mouse_filter = Control.MOUSE_FILTER_PASS
+	left_area.add_child(mid)
+	turn_label = _label("", 30, Art.COL_TEXT, true)
+	turn_label.custom_minimum_size = Vector2(260, 0)
+	turn_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	mid.add_child(turn_label)
+	field_slot = HBoxContainer.new()
+	field_slot.alignment = BoxContainer.ALIGNMENT_CENTER
+	field_slot.custom_minimum_size = Vector2(220, 110)
+	mid.add_child(field_slot)
+
+	me_board = _board_row()
+	left_area.add_child(me_board)
+
+	var me_bar := _bar()
+	left_area.add_child(me_bar)
+	me_hero_view = HeroView.new()
+	me_hero_view.pressed.connect(_on_hero_pressed.bind(ME))
+	me_bar.add_child(me_hero_view)
+	power_btn = Button.new()
+	power_btn.custom_minimum_size = Vector2(280, 96)
+	power_btn.add_theme_font_size_override("font_size", 19)
+	power_btn.pressed.connect(_on_power_pressed)
+	me_bar.add_child(power_btn)
+	me_info = _label("", 22, Art.COL_TEXT, true)
+	me_bar.add_child(me_info)
+	me_bar.add_child(_spacer())
+	me_bar.add_child(_label("함정", 18, Art.COL_SUB))
+	me_traps_box = HBoxContainer.new()
+	me_traps_box.add_theme_constant_override("separation", 6)
+	me_bar.add_child(me_traps_box)
+
+	hand_area = Control.new()
+	hand_area.custom_minimum_size = Vector2(0, 256)
+	hand_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	hand_area.mouse_filter = Control.MOUSE_FILTER_PASS
+	hand_area.resized.connect(_layout_hand)
+	left_area.add_child(hand_area)
+
+	# ── 오른쪽: 시장 + 자세히 보기 + 기록 ──
+	var right := PanelContainer.new()
+	right.custom_minimum_size = Vector2(RIGHT_W, 0)
+	var rsb := Art.panel_style(Art.COL_PANEL, Color("#2c313d"), 2, 14)
+	rsb.content_margin_left = 12
+	rsb.content_margin_right = 12
+	rsb.content_margin_top = 10
+	rsb.content_margin_bottom = 10
+	right.add_theme_stylebox_override("panel", rsb)
+	root.add_child(right)
+	var rv := VBoxContainer.new()
+	rv.add_theme_constant_override("separation", 8)
+	right.add_child(rv)
+
+	var head := HBoxContainer.new()
+	rv.add_child(head)
+	head.add_child(_label("시장", 28, Art.COL_TEXT, true))
+	var sub := _label("  산 카드는 내 버린 더미로", 16, Art.COL_SUB)
+	sub.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	head.add_child(sub)
+	var exit_btn := Button.new()
+	exit_btn.text = "나가기"
+	exit_btn.add_theme_font_size_override("font_size", 18)
+	exit_btn.pressed.connect(func(): exit_to_menu.emit())
+	head.add_child(exit_btn)
+
+	market_box = VBoxContainer.new()
+	market_box.add_theme_constant_override("separation", 6)
+	rv.add_child(market_box)
+
+	var btns := HBoxContainer.new()
+	btns.add_theme_constant_override("separation", 8)
+	rv.add_child(btns)
+	refresh_btn = Button.new()
+	refresh_btn.text = "시장 갱신 (1골드)"
+	refresh_btn.add_theme_font_size_override("font_size", 19)
+	refresh_btn.custom_minimum_size = Vector2(0, 56)
+	refresh_btn.pressed.connect(_on_refresh_pressed)
+	btns.add_child(refresh_btn)
+	end_btn = Button.new()
+	end_btn.text = "턴 종료"
+	end_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	end_btn.custom_minimum_size = Vector2(0, 56)
+	end_btn.add_theme_font_size_override("font_size", 26)
+	Art.accent_button(end_btn, Color("#16a34a"))
+	end_btn.pressed.connect(_on_end_pressed)
+	btns.add_child(end_btn)
+
+	var detail := PanelContainer.new()
+	var dsb := Art.panel_style(Art.COL_PANEL_2, Color("#353b49"), 2, 12)
+	dsb.content_margin_left = 8
+	dsb.content_margin_right = 8
+	dsb.content_margin_top = 8
+	dsb.content_margin_bottom = 8
+	detail.add_theme_stylebox_override("panel", dsb)
+	detail.custom_minimum_size = Vector2(0, 300)
+	rv.add_child(detail)
+	var dh := HBoxContainer.new()
+	dh.add_theme_constant_override("separation", 10)
+	detail.add_child(dh)
+	detail_holder = CenterContainer.new()
+	detail_holder.custom_minimum_size = Vector2(200, 280)
+	dh.add_child(detail_holder)
+	detail_actions = VBoxContainer.new()
+	detail_actions.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	detail_actions.add_theme_constant_override("separation", 8)
+	dh.add_child(detail_actions)
+
+	log_label = RichTextLabel.new()
+	log_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	log_label.scroll_following = true
+	log_label.bbcode_enabled = true
+	log_label.add_theme_font_size_override("normal_font_size", 16)
+	log_label.add_theme_font_size_override("bold_font_size", 16)
+	log_label.custom_minimum_size = Vector2(0, 90)
+	rv.add_child(log_label)
+
+	# ── 연출 / 팝업 층 ──
+	fx_layer = Control.new()
+	fx_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(fx_layer)
+	fx_layer.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	hint_label = _label("", 26, Art.COL_SEL, true)
+	hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hint_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	hint_label.add_theme_constant_override("outline_size", 8)
+	fx_layer.add_child(hint_label)
+
+	overlay = Control.new()
+	overlay.visible = false
+	add_child(overlay)
+	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+
+func _bar() -> HBoxContainer:
+	var b := HBoxContainer.new()
+	b.add_theme_constant_override("separation", 14)
+	b.custom_minimum_size = Vector2(0, 104)
+	b.mouse_filter = Control.MOUSE_FILTER_PASS
+	return b
+
+
+func _board_row() -> HBoxContainer:
+	var b := HBoxContainer.new()
+	b.alignment = BoxContainer.ALIGNMENT_CENTER
+	b.custom_minimum_size = Vector2(0, 176)
+	b.add_theme_constant_override("separation", 12)
+	b.mouse_filter = Control.MOUSE_FILTER_PASS
+	return b
+
+
+func _label(text: String, fsize: int, color: Color, use_bold: bool = false) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_size_override("font_size", fsize)
+	l.add_theme_color_override("font_color", color)
+	if use_bold:
+		l.add_theme_font_override("font", Art.bold())
+	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return l
+
+
+func _spacer() -> Control:
+	var c := Control.new()
+	c.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return c
+
+
+func _clear(node: Node) -> void:
+	for c in node.get_children():
+		node.remove_child(c)
+		c.queue_free()
+
+
+# ─────────────────────────────── 게임 진행 ───────────────────────────────
+
+func _start_game() -> void:
+	game = Game.new()
+	game.start(my_hero, op_hero, -1, ["나", "상대"])
+	game.logged.connect(_on_log)
+	game.game_event.connect(_on_game_event)
+	ai = AI.new()
+	ai.level = ai_level
+	game.mulligan(OP, [])
+	log_label.clear()
+	for l in game.log_lines:
+		_on_log(l)
+	op_hero_view.setup(game.players[OP])
+	me_hero_view.setup(game.players[ME])
+	_refresh()
+	_show_mulligan()
+
+
+func _idle() -> bool:
+	return game != null and game.phase == "play" and game.current == ME and not busy and not overlay.visible
+
+
+func _do(a: Dictionary) -> bool:
+	_snapshot_positions()
+	var ok := game.apply_action(ME, a)
+	if not ok:
+		_show_hint("지금은 할 수 없는 행동입니다")
+	_refresh()
+	_flush_fx()
+	_check_over()
+	return ok
+
+
+func _check_over() -> void:
+	if game.phase == "over" and not _over_shown:
+		_over_shown = true
+		busy = true
+		await _wait(1.0)
+		if is_inside_tree():
+			_show_game_over()
+
+
+func _run_ai() -> void:
+	busy = true
+	_run_id += 1
+	var my_id := _run_id
+	_refresh()
+	_banner("상대 턴", Art.COL_TARGET)
+	await _wait(0.9)
+	var guard := 0
+	while my_id == _run_id and game.phase == "play" and game.current == OP and guard < 200:
+		guard += 1
+		var a: Dictionary = ai.choose_action(game, OP)
+		if a.is_empty():
+			break
+		_snapshot_positions()
+		var ok: bool = game.apply_action(OP, a)
+		if not ok:
+			game.apply_action(OP, {"type": "end"})
+		_refresh()
+		_flush_fx()
+		if a["type"] == "end" or not ok:
+			break
+		var delay := AI_DELAY if a["type"] in ["play", "attack", "power", "buy"] else 0.3
+		await _wait(delay)
+	if my_id != _run_id:
+		return
+	if game.phase == "play" and game.current == OP:
+		game.apply_action(OP, {"type": "end"})
+	busy = false
+	_refresh()
+	if game.phase == "over":
+		_check_over()
+	else:
+		_banner("내 턴", Art.COL_OK)
+
+
+func _wait(sec: float) -> void:
+	var t := Timer.new()
+	t.one_shot = true
+	t.wait_time = sec
+	add_child(t)
+	t.start()
+	await t.timeout
+	t.queue_free()
+
+
+# ─────────────────────────────── 화면 갱신 ───────────────────────────────
+
+func _refresh() -> void:
+	if game == null:
+		return
+	var me: PlayerState = game.players[ME]
+	var op: PlayerState = game.players[OP]
+	op_hero_view.set_highlight(_target_hl(OP, -1))
+	me_hero_view.set_highlight(_target_hl(ME, -1))
+	op_hero_view.queue_redraw()
+	me_hero_view.queue_redraw()
+	op_info.text = "손패 %d장\n덱 %d · 버린 더미 %d\n마나 %d/%d · 골드 %d" % [op.hand.size(), op.deck.size(), op.discard.size(), op.mana, op.max_mana, op.gold]
+	me_info.text = "마나  %d / %d\n골드  %d\n덱 %d · 버린 더미 %d" % [me.mana, me.max_mana, me.gold, me.deck.size(), me.discard.size()]
+	_fill_traps(op_traps_box, op, false)
+	_fill_traps(me_traps_box, me, true)
+	_fill_board(op_board, op, OP)
+	_fill_board(me_board, me, ME)
+	_fill_field()
+	_fill_hand()
+	_fill_market()
+	_update_buttons()
+	_update_detail()
+	if game.phase == "over":
+		turn_label.text = "게임 종료"
+	elif game.phase == "mulligan":
+		turn_label.text = "준비 중"
+	elif game.current == ME:
+		turn_label.text = "내 턴 (%d)" % me.turn_count
+		turn_label.add_theme_color_override("font_color", Art.COL_OK)
+	else:
+		turn_label.text = "상대 턴"
+		turn_label.add_theme_color_override("font_color", Art.COL_TARGET)
+
+
+func _target_hl(side: int, slot: int) -> String:
+	if targeting.is_empty():
+		return ""
+	if Game.target_in(targeting["targets"], {"side": side, "slot": slot}):
+		return "target"
+	return ""
+
+
+func _fill_traps(box: HBoxContainer, p: PlayerState, own: bool) -> void:
+	_clear(box)
+	for i in p.traps.size():
+		var t: CardInst = p.traps[i]
+		var v: CardView = CardView.new().setup(t.data, t, "trap_own" if own else "trap_back")
+		if own:
+			v.pressed.connect(_on_trap_pressed.bind(i))
+		box.add_child(v)
+	for k in range(p.traps.size(), game.trap_slots(p.idx)):
+		var empty := Panel.new()
+		empty.custom_minimum_size = Vector2(64, 84)
+		empty.add_theme_stylebox_override("panel", Art.panel_style(Color(1, 1, 1, 0.03), Color("#3a4050"), 2, 8))
+		empty.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		box.add_child(empty)
+
+
+func _fill_board(box: HBoxContainer, p: PlayerState, side: int) -> void:
+	_clear(box)
+	for i in p.board.size():
+		var u: CardInst = p.board[i]
+		var v: CardView = CardView.new().setup(u.data, u, "board")
+		v.pressed.connect(_on_unit_pressed.bind(side, i))
+		var hl := _target_hl(side, i)
+		if hl == "" and sel.get("kind", "") == "unit" and int(sel.get("side", -1)) == side and int(sel.get("index", -1)) == i:
+			hl = "sel"
+		elif hl == "" and targeting.is_empty() and side == ME and _idle() and game.attack_error(ME, i) == "":
+			hl = "ok"
+		v.set_highlight(hl)
+		box.add_child(v)
+	if p.board.is_empty():
+		box.add_child(_label("유닛 없음", 20, Color("#4b5263")))
+
+
+func _fill_field() -> void:
+	_clear(field_slot)
+	if game.field == null:
+		field_slot.add_child(_label("공용 필드 없음", 18, Color("#4b5263")))
+		return
+	var v: CardView = CardView.new().setup(game.field.data, game.field, "field")
+	v.custom_minimum_size = Vector2(220, 100)
+	v.caption = "주인: " + ("나" if game.field_owner == ME else "상대")
+	v.pressed.connect(_on_field_pressed)
+	if sel.get("kind", "") == "field":
+		v.set_highlight("sel")
+	field_slot.add_child(v)
+
+
+func _fill_hand() -> void:
+	_clear(hand_area)
+	var me: PlayerState = game.players[ME]
+	for i in me.hand.size():
+		var c: CardInst = me.hand[i]
+		var v: CardView = CardView.new().setup(c.data, c, "hand")
+		v.pressed.connect(_on_hand_pressed.bind(i))
+		var selected: bool = sel.get("kind", "") == "hand" and int(sel.get("index", -1)) == i
+		if selected:
+			v.set_highlight("sel")
+		elif targeting.is_empty() and _idle() and game.play_error(ME, i) == "":
+			v.set_highlight("ok")
+		v.set_meta("selected", selected)
+		hand_area.add_child(v)
+	_layout_hand()
+
+
+func _layout_hand() -> void:
+	var cards := hand_area.get_children()
+	var n := cards.size()
+	if n == 0:
+		return
+	var cw := 170.0
+	var w := hand_area.size.x
+	var step := cw + 12.0
+	if n > 1 and step * (n - 1) + cw > w:
+		step = (w - cw) / float(n - 1)
+	var total := step * (n - 1) + cw
+	var x0 := (w - total) / 2.0
+	for i in n:
+		var c: Control = cards[i]
+		var y := 4.0 if c.get_meta("selected", false) else 16.0
+		c.position = Vector2(x0 + i * step, y)
+
+
+func _fill_market() -> void:
+	_clear(market_box)
+	var me: PlayerState = game.players[ME]
+	for i in game.market.size():
+		var id: String = game.market[i]
+		if id == "":
+			continue
+		var v: CardView = CardView.new().setup(CardDB.cards[id], null, "market")
+		v.price = game.price(ME, id)
+		v.dim = v.price > me.gold
+		if sel.get("kind", "") == "market" and int(sel.get("index", -1)) == i:
+			v.set_highlight("sel")
+		v.pressed.connect(_on_market_pressed.bind(i))
+		market_box.add_child(v)
+
+
+func _update_buttons() -> void:
+	var pd: Dictionary = game.power_def(ME)
+	power_btn.text = "영웅 능력 (%d마나)\n%s\n%s" % [int(pd["cost"]), pd["name"], pd["text"]]
+	power_btn.disabled = not _idle() or game.power_error(ME) != ""
+	end_btn.disabled = not _idle()
+	refresh_btn.disabled = not _idle() or game.refresh_error(ME) != ""
+
+
+# ── 자세히 보기 + 행동 버튼 ──
+
+func _update_detail() -> void:
+	_clear(detail_holder)
+	_clear(detail_actions)
+	var me: PlayerState = game.players[ME]
+	var kind: String = sel.get("kind", "")
+	var data: Dictionary = {}
+	var inst = null
+	var price := -1
+	match kind:
+		"hand":
+			var i := int(sel["index"])
+			if i < me.hand.size():
+				inst = me.hand[i]
+				data = inst.data
+				_detail_hand_buttons(i)
+		"market":
+			var mi := int(sel["index"])
+			if mi < game.market.size() and game.market[mi] != "":
+				data = CardDB.cards[game.market[mi]]
+				price = game.price(ME, game.market[mi])
+				var err: String = game.buy_error(ME, mi)
+				_action_button("구매하기 (%d골드)" % price if err == "" else "구매 불가: " + err, err == "", _on_buy_pressed, Color("#d97706"))
+		"unit":
+			var side := int(sel["side"])
+			var ui := int(sel["index"])
+			var p: PlayerState = game.players[side]
+			if ui < p.board.size():
+				inst = p.board[ui]
+				data = inst.data
+				if side == ME and _idle():
+					var aerr: String = game.attack_error(ME, ui)
+					_action_button("공격하기" if aerr == "" else aerr, aerr == "", _on_attack_btn, Color("#dc2626"))
+		"field":
+			if game.field != null:
+				inst = game.field
+				data = inst.data
+				_info_label("주인: " + ("나" if game.field_owner == ME else "상대") + "\n필드는 전장에 1장만 있을 수 있습니다. 새 필드를 내면 교체됩니다.")
+		"trap":
+			var ti := int(sel["index"])
+			if ti < me.traps.size():
+				inst = me.traps[ti]
+				data = inst.data
+				_info_label("내가 놓은 함정입니다. 상대 턴에 조건이 맞으면 자동으로 발동합니다.")
+		"hero":
+			var hp: PlayerState = game.players[int(sel["side"])]
+			var pd: Dictionary = CardDB.powers[hp.power_id]
+			_info_label("%s · %s\n체력 %d / %d, 방어도 %d\n영웅 능력: %s (%d마나)\n%s" % [hp.name, hp.hero_name, hp.hp, hp.max_hp, hp.armor, pd["name"], int(pd["cost"]), pd["text"]])
+	if data.is_empty():
+		if kind != "hero":
+			_info_label(_tips_text())
+		return
+	var v: CardView = CardView.new().setup(data, inst, "detail")
+	v.price = price
+	detail_holder.add_child(v)
+	_keyword_help(data, inst)
+	var close := Button.new()
+	close.text = "닫기"
+	close.add_theme_font_size_override("font_size", 18)
+	close.pressed.connect(func():
+		sel = {}
+		targeting = {}
+		_refresh())
+	detail_actions.add_child(close)
+
+
+func _detail_hand_buttons(i: int) -> void:
+	var err: String = game.play_error(ME, i)
+	_action_button("사용하기" if err == "" else "사용 불가: " + err, err == "", _on_use_pressed, Color("#2563eb"))
+	var perr: String = game.pitch_error(ME, i)
+	_action_button("버리기 → 골드 +1", perr == "", _on_pitch_pressed, Color("#b45309"))
+	var cerr: String = game.clean_error(ME, i)
+	_action_button("정리 (2골드, 영구 제거)" if cerr == "" else "정리 불가: " + cerr, cerr == "", _on_clean_pressed, Color("#475569"))
+
+
+func _action_button(text: String, enabled: bool, cb: Callable, col: Color) -> void:
+	var b := Button.new()
+	b.text = text
+	b.disabled = not enabled
+	b.custom_minimum_size = Vector2(0, 52)
+	b.add_theme_font_size_override("font_size", 19)
+	b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	if enabled:
+		Art.accent_button(b, col)
+	b.pressed.connect(cb)
+	detail_actions.add_child(b)
+
+
+func _info_label(text: String) -> void:
+	var l := _label(text, 17, Art.COL_SUB)
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	l.custom_minimum_size = Vector2(220, 0)
+	detail_actions.add_child(l)
+
+
+func _keyword_help(data: Dictionary, inst) -> void:
+	var lines: Array = []
+	var kws: Array = inst.keywords if inst != null and inst is CardInst else data.get("keywords", [])
+	for k in kws:
+		lines.append("[b]%s[/b]: %s" % [CardDB.KEYWORD_NAMES.get(k, k), CardDB.KEYWORD_DESC.get(k, "")])
+	var tx: String = data.get("text", "")
+	for word in CardDB.TEXT_KEYWORD_DESC:
+		if tx.contains(word):
+			lines.append("[b]%s[/b]: %s" % [word, CardDB.TEXT_KEYWORD_DESC[word]])
+	if lines.is_empty():
+		return
+	var r := RichTextLabel.new()
+	r.bbcode_enabled = true
+	r.fit_content = true
+	r.scroll_active = false
+	r.add_theme_font_size_override("normal_font_size", 15)
+	r.add_theme_font_size_override("bold_font_size", 15)
+	r.add_theme_color_override("default_color", Art.COL_SUB)
+	r.text = "\n".join(PackedStringArray(lines))
+	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	detail_actions.add_child(r)
+
+
+func _tips_text() -> String:
+	if game.phase == "play" and game.current == ME:
+		return "카드를 누르면 여기서 자세히 보고 행동을 고를 수 있어요.\n\n· 마나: 카드 사용\n· 골드: 손패를 버려서 얻고, 시장에서 카드 구매\n· 초록 테두리: 지금 쓸 수 있는 카드·공격 가능한 유닛"
+	return "상대 차례입니다. 카드를 눌러 자세히 볼 수 있어요."
+
+
+# ─────────────────────────────── 입력 ───────────────────────────────
+
+func _gui_input(ev: InputEvent) -> void:
+	if ev is InputEventMouseButton and ev.pressed:
+		if not targeting.is_empty():
+			targeting = {}
+			_show_hint("취소했습니다")
+			_refresh()
+		elif not sel.is_empty():
+			sel = {}
+			_refresh()
+
+
+func _begin_targeting(action: Dictionary, targets: Array, hint: String) -> void:
+	if targets.is_empty():
+		_show_hint("고를 수 있는 대상이 없습니다")
+		return
+	targeting = action.duplicate()
+	targeting["targets"] = targets
+	_show_hint(hint + "  (빈 곳을 누르면 취소)")
+	_refresh()
+
+
+func _try_target(t: Dictionary) -> void:
+	if not Game.target_in(targeting["targets"], t):
+		_show_hint("그 대상은 고를 수 없습니다")
+		return
+	var a := targeting.duplicate()
+	a.erase("targets")
+	a["target"] = t
+	targeting = {}
+	sel = {}
+	_do(a)
+
+
+func _on_hand_pressed(_v: Control, i: int) -> void:
+	if not targeting.is_empty():
+		targeting = {}
+	sel = {"kind": "hand", "index": i}
+	_refresh()
+
+
+func _on_unit_pressed(_v: Control, side: int, i: int) -> void:
+	if not targeting.is_empty():
+		_try_target({"side": side, "slot": i})
+		return
+	sel = {"kind": "unit", "side": side, "index": i}
+	if side == ME and _idle() and game.attack_error(ME, i) == "":
+		_begin_targeting({"type": "attack", "unit": i}, game.attack_targets(ME), "공격할 대상을 고르세요")
+		return
+	_refresh()
+
+
+func _on_hero_pressed(_v: Control, side: int) -> void:
+	if not targeting.is_empty():
+		_try_target({"side": side, "slot": -1})
+		return
+	sel = {"kind": "hero", "side": side}
+	_refresh()
+
+
+func _on_market_pressed(_v: Control, i: int) -> void:
+	targeting = {}
+	sel = {"kind": "market", "index": i}
+	_refresh()
+
+
+func _on_field_pressed(_v: Control) -> void:
+	if not targeting.is_empty():
+		return
+	sel = {"kind": "field"}
+	_refresh()
+
+
+func _on_trap_pressed(_v: Control, i: int) -> void:
+	if not targeting.is_empty():
+		return
+	sel = {"kind": "trap", "index": i}
+	_refresh()
+
+
+func _on_power_pressed() -> void:
+	if not _idle():
+		return
+	var err: String = game.power_error(ME)
+	if err != "":
+		_show_hint(err)
+		return
+	var pd: Dictionary = game.power_def(ME)
+	if pd.has("target"):
+		sel = {}
+		_begin_targeting({"type": "power"}, game.valid_targets(ME, pd["target"]), "영웅 능력의 대상을 고르세요")
+	else:
+		_do({"type": "power"})
+
+
+func _on_use_pressed() -> void:
+	if not _idle() or sel.get("kind", "") != "hand":
+		return
+	var i := int(sel["index"])
+	var me: PlayerState = game.players[ME]
+	var err: String = game.play_error(ME, i)
+	if err != "":
+		_show_hint(err)
+		return
+	var c: CardInst = me.hand[i]
+	if c.data.has("target"):
+		_begin_targeting({"type": "play", "hand": i}, game.valid_targets(ME, c.data["target"]), "'%s'의 대상을 고르세요" % c.display_name())
+	else:
+		sel = {}
+		_do({"type": "play", "hand": i})
+
+
+func _on_pitch_pressed() -> void:
+	if not _idle() or sel.get("kind", "") != "hand":
+		return
+	var i := int(sel["index"])
+	sel = {}
+	_do({"type": "pitch", "hand": i})
+
+
+func _on_clean_pressed() -> void:
+	if not _idle() or sel.get("kind", "") != "hand":
+		return
+	var i := int(sel["index"])
+	sel = {}
+	_do({"type": "clean", "hand": i})
+
+
+func _on_buy_pressed() -> void:
+	if not _idle() or sel.get("kind", "") != "market":
+		return
+	var i := int(sel["index"])
+	sel = {}
+	_do({"type": "buy", "market": i})
+
+
+func _on_attack_btn() -> void:
+	if sel.get("kind", "") != "unit":
+		return
+	var i := int(sel["index"])
+	_begin_targeting({"type": "attack", "unit": i}, game.attack_targets(ME), "공격할 대상을 고르세요")
+
+
+func _on_refresh_pressed() -> void:
+	if _idle():
+		sel = {}
+		_do({"type": "refresh"})
+
+
+func _on_end_pressed() -> void:
+	if not _idle():
+		return
+	sel = {}
+	targeting = {}
+	if _do({"type": "end"}) and game.phase == "play" and game.current == OP:
+		_run_ai()
+
+
+# ─────────────────────────────── 기록 / 연출 ───────────────────────────────
+
+func _on_log(text: String) -> void:
+	if log_label == null:
+		return
+	var t := text
+	if text.begins_with("──"):
+		t = "[color=#facc15]%s[/color]" % text
+	elif text.begins_with("나:"):
+		t = "[color=#93c5fd]%s[/color]" % text
+	elif text.begins_with("상대:"):
+		t = "[color=#fca5a5]%s[/color]" % text
+	log_label.append_text(t + "\n")
+
+
+func _key_of(obj) -> String:
+	if obj is PlayerState:
+		return "h%d" % obj.idx
+	if obj is CardInst:
+		return "u%d" % obj.uid
+	return ""
+
+
+func _snapshot_positions() -> void:
+	_pos_cache.clear()
+	for box in [op_board, me_board]:
+		for v in box.get_children():
+			if v is CardView and v.inst != null:
+				_pos_cache["u%d" % v.inst.uid] = v.global_position + v.size / 2.0
+	_pos_cache["h0"] = me_hero_view.global_position + me_hero_view.size / 2.0
+	_pos_cache["h1"] = op_hero_view.global_position + op_hero_view.size / 2.0
+
+
+func _on_game_event(kind: String, info: Dictionary) -> void:
+	match kind:
+		"damage", "heal":
+			_pending_fx.append({"kind": kind, "key": _key_of(info["obj"]), "amount": int(info["amount"])})
+		"trap":
+			_pending_fx.append({"kind": "trap", "name": info["card"].display_name(), "player": int(info["player"])})
+		"play":
+			if int(info["player"]) == OP:
+				_pending_fx.append({"kind": "reveal", "card": info["card"]})
+		"buy":
+			if int(info["player"]) == OP:
+				_pending_fx.append({"kind": "opbuy", "name": info["card"].display_name()})
+
+
+func _flush_fx() -> void:
+	if _pending_fx.is_empty():
+		return
+	await get_tree().process_frame
+	if not is_inside_tree():
+		return
+	# 살아 있는 유닛은 새 위치, 죽은 유닛은 직전 위치
+	for box in [op_board, me_board]:
+		for v in box.get_children():
+			if v is CardView and v.inst != null:
+				_pos_cache["u%d" % v.inst.uid] = v.global_position + v.size / 2.0
+	var fxs := _pending_fx.duplicate()
+	_pending_fx.clear()
+	var offset := 0
+	for fx in fxs:
+		match fx["kind"]:
+			"damage":
+				if _pos_cache.has(fx["key"]):
+					var txt: String = "막힘" if int(fx["amount"]) == 0 else "-%d" % int(fx["amount"])
+					_float_text(_pos_cache[fx["key"]] + Vector2(0, offset % 3 * 8), txt, Color("#ff4d4d"))
+			"heal":
+				if _pos_cache.has(fx["key"]):
+					_float_text(_pos_cache[fx["key"]], "+%d" % int(fx["amount"]), Color("#4ade80"))
+			"trap":
+				_banner("함정 발동! " + fx["name"], Color("#c084fc"))
+			"reveal":
+				_reveal(fx["card"])
+			"opbuy":
+				_show_hint("상대가 %s 구매" % fx["name"])
+		offset += 1
+
+
+func _float_text(pos: Vector2, text: String, col: Color) -> void:
+	var l := _label(text, 44, col, true)
+	l.add_theme_color_override("font_outline_color", Color.BLACK)
+	l.add_theme_constant_override("outline_size", 10)
+	fx_layer.add_child(l)
+	l.reset_size()
+	l.position = pos - l.size / 2.0 - fx_layer.global_position
+	var tw := l.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(l, "position:y", l.position.y - 70, 1.0)
+	tw.tween_property(l, "modulate:a", 0.0, 1.0).set_delay(0.35)
+	tw.chain().tween_callback(l.queue_free)
+
+
+func _banner(text: String, col: Color) -> void:
+	var l := _label(text, 64, col, true)
+	l.add_theme_color_override("font_outline_color", Color.BLACK)
+	l.add_theme_constant_override("outline_size", 14)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	fx_layer.add_child(l)
+	l.reset_size()
+	var area := left_area.get_global_rect()
+	l.position = Vector2(area.position.x + (area.size.x - l.size.x) / 2.0, area.position.y + area.size.y * 0.38) - fx_layer.global_position
+	l.modulate.a = 0.0
+	var tw := l.create_tween()
+	tw.tween_property(l, "modulate:a", 1.0, 0.15)
+	tw.tween_interval(0.8)
+	tw.tween_property(l, "modulate:a", 0.0, 0.35)
+	tw.tween_callback(l.queue_free)
+
+
+func _reveal(c: CardInst) -> void:
+	var v: CardView = CardView.new().setup(c.data, null, "detail")
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fx_layer.add_child(v)
+	var area := left_area.get_global_rect()
+	v.position = Vector2(area.position.x + area.size.x - 230, area.position.y + 120) - fx_layer.global_position
+	v.modulate.a = 0.0
+	var tw := v.create_tween()
+	tw.tween_property(v, "modulate:a", 1.0, 0.15)
+	tw.tween_interval(1.1)
+	tw.tween_property(v, "modulate:a", 0.0, 0.3)
+	tw.tween_callback(v.queue_free)
+
+
+func _show_hint(text: String) -> void:
+	_hint_id += 1
+	var my := _hint_id
+	hint_label.text = text
+	hint_label.reset_size()
+	var area := left_area.get_global_rect()
+	hint_label.position = Vector2(area.position.x + (area.size.x - hint_label.size.x) / 2.0, area.position.y + area.size.y * 0.30) - fx_layer.global_position
+	hint_label.visible = true
+	await _wait(2.4)
+	if my == _hint_id and is_inside_tree():
+		hint_label.visible = false
+
+
+# ─────────────────────────────── 팝업 ───────────────────────────────
+
+func _modal() -> VBoxContainer:
+	_clear(overlay)
+	overlay.visible = true
+	var dim := ColorRect.new()
+	dim.color = Color(0, 0, 0, 0.78)
+	overlay.add_child(dim)
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var center := CenterContainer.new()
+	overlay.add_child(center)
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 18)
+	v.alignment = BoxContainer.ALIGNMENT_CENTER
+	center.add_child(v)
+	return v
+
+
+func _show_mulligan() -> void:
+	var me: PlayerState = game.players[ME]
+	var v := _modal()
+	var title := _label("시작 손패", 48, Art.COL_TEXT, true)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(title)
+	var who := "내가 선공입니다 (손패 4장)" if game.first == ME else "상대가 선공입니다 (나는 손패 5장 + 골드 1)"
+	var sub := _label("바꾸고 싶은 카드를 누르세요 (한 번만 교체)\n" + who, 22, Art.COL_SUB)
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(sub)
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 16)
+	v.add_child(row)
+	mull_marks = {}
+	for i in me.hand.size():
+		var c: CardInst = me.hand[i]
+		var cv: CardView = CardView.new().setup(c.data, c, "detail")
+		cv.pressed.connect(_on_mull_card.bind(i))
+		row.add_child(cv)
+	var ok := Button.new()
+	ok.text = "확정"
+	ok.custom_minimum_size = Vector2(260, 64)
+	ok.add_theme_font_size_override("font_size", 28)
+	Art.accent_button(ok, Color("#16a34a"))
+	ok.pressed.connect(_on_mull_confirm)
+	var okc := CenterContainer.new()
+	okc.add_child(ok)
+	v.add_child(okc)
+
+
+func _on_mull_card(view: Control, i: int) -> void:
+	if mull_marks.has(i):
+		mull_marks.erase(i)
+		view.set_highlight("")
+	else:
+		mull_marks[i] = true
+		view.set_highlight("mark")
+
+
+func _on_mull_confirm() -> void:
+	game.mulligan(ME, mull_marks.keys())
+	overlay.visible = false
+	_clear(overlay)
+	_refresh()
+	if game.phase == "play" and game.current == OP:
+		_run_ai()
+	else:
+		_banner("내 턴", Art.COL_OK)
+
+
+func _show_game_over() -> void:
+	var me: PlayerState = game.players[ME]
+	var op: PlayerState = game.players[OP]
+	var v := _modal()
+	var text := "무승부"
+	var col := Art.COL_SEL
+	if game.winner == ME:
+		text = "승리!"
+		col = Art.COL_OK
+	elif game.winner == OP:
+		text = "패배..."
+		col = Art.COL_TARGET
+	var title := _label(text, 96, col, true)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(title)
+	var sub := _label("내 턴 %d번 · 내 체력 %d · 상대 체력 %d" % [me.turn_count, me.hp, op.hp], 24, Art.COL_SUB)
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(sub)
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 20)
+	v.add_child(row)
+	var again := Button.new()
+	again.text = "다시 하기"
+	again.custom_minimum_size = Vector2(240, 64)
+	again.add_theme_font_size_override("font_size", 26)
+	Art.accent_button(again, Color("#16a34a"))
+	again.pressed.connect(func(): restart_requested.emit())
+	row.add_child(again)
+	var menu := Button.new()
+	menu.text = "메인 메뉴"
+	menu.custom_minimum_size = Vector2(240, 64)
+	menu.add_theme_font_size_override("font_size", 26)
+	menu.pressed.connect(func(): exit_to_menu.emit())
+	row.add_child(menu)

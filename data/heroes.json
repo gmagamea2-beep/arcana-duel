@@ -1,0 +1,15 @@
+{
+  "heroes": [
+    {"id": "fire", "name": "이그나", "title": "잿불 마녀", "faction": "fire", "icon": "fire-silhouette", "power": "fire", "desc": "공격형. 직접 피해와 돌진으로 빠르게 몰아붙입니다."},
+    {"id": "steel", "name": "로완", "title": "철벽 기사", "faction": "steel", "icon": "visored-helm", "power": "steel", "desc": "방어형. 도발과 방어도로 버티며 회복합니다."},
+    {"id": "shadow", "name": "세라", "title": "밤의 상인", "faction": "shadow", "icon": "hood", "power": "shadow", "desc": "방해형. 함정과 독, 골드 강탈로 상대를 흔듭니다."},
+    {"id": "forest", "name": "테라", "title": "숲의 목자", "faction": "forest", "icon": "tree-branch", "power": "forest", "desc": "성장형. 토큰과 마나 가속으로 물량을 쌓습니다."}
+  ],
+  "powers": {
+    "fire": {"name": "불꽃 튀기기", "cost": 2, "target": "enemy", "text": "적 하나에 1 피해", "effects": [{"do": "damage", "target": "chosen", "amount": 1}]},
+    "steel": {"name": "강철 갑옷", "cost": 2, "text": "방어도 +2", "effects": [{"do": "armor", "amount": 2}]},
+    "shadow": {"name": "밤의 거래", "cost": 2, "text": "카드 1장 뽑기", "effects": [{"do": "draw", "amount": 1}]},
+    "forest": {"name": "새싹 심기", "cost": 2, "text": "묘목(1/1) 소환", "effects": [{"do": "summon", "token": "T_SAPLING", "count": 1}]},
+    "emperor": {"name": "천공의 심판", "cost": 2, "target": "enemy", "text": "적 하나에 2 피해", "effects": [{"do": "damage", "target": "chosen", "amount": 2}]}
+  }
+}
