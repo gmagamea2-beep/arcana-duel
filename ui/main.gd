@@ -4,6 +4,7 @@ extends Control
 const Art = preload("res://ui/art.gd")
 const CardDB = preload("res://core/card_db.gd")
 const Battle = preload("res://ui/battle.gd")
+const Settings = preload("res://ui/settings.gd")
 
 const VERSION := "알파 v0.1"
 
@@ -89,6 +90,13 @@ func _show_menu() -> void:
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_theme_constant_override("separation", 18)
 	v.add_child(row)
+	var tut := Button.new()
+	tut.text = "튜토리얼"
+	tut.custom_minimum_size = Vector2(240, 76)
+	tut.add_theme_font_size_override("font_size", 28)
+	Art.accent_button(tut, Color("#ca8a04"))
+	tut.pressed.connect(_start_tutorial)
+	row.add_child(tut)
 	var start := Button.new()
 	start.text = "게임 시작"
 	start.custom_minimum_size = Vector2(300, 76)
@@ -110,6 +118,25 @@ func _show_menu() -> void:
 		quit.pressed.connect(func(): get_tree().quit())
 		row.add_child(quit)
 
+	var opt := HBoxContainer.new()
+	opt.alignment = BoxContainer.ALIGNMENT_CENTER
+	opt.add_theme_constant_override("separation", 16)
+	v.add_child(opt)
+	var tips := CheckButton.new()
+	tips.text = "게임 중 도움말 팁"
+	tips.add_theme_font_size_override("font_size", 20)
+	tips.button_pressed = Settings.tips_on()
+	tips.toggled.connect(func(on: bool): Settings.set_value("tips_on", on))
+	opt.add_child(tips)
+	var reset := Button.new()
+	reset.text = "팁 다시 보기"
+	reset.add_theme_font_size_override("font_size", 18)
+	reset.pressed.connect(func():
+		Settings.reset_tips()
+		reset.text = "팁을 처음부터 다시 보여 줄게요")
+	opt.add_child(reset)
+	if not bool(Settings.get_value("tutorial_done", false)):
+		v.add_child(_label("처음이라면 [튜토리얼]부터 해 보세요! (5분)", 22, Art.COL_SEL, true))
 	v.add_child(_label("아이콘: game-icons.net (CC BY 3.0) · 글꼴: Pretendard (OFL 1.1)", 15, Color("#5b6272")))
 
 
@@ -181,6 +208,16 @@ func _label(text: String, fsize: int, color: Color, use_bold: bool = false) -> L
 
 
 # ─────────────────────────────── 대전 ───────────────────────────────
+
+func _start_tutorial() -> void:
+	var b := Battle.new()
+	b.my_hero = "fire"
+	b.op_hero = "forest"
+	b.tutorial_mode = true
+	b.exit_to_menu.connect(_show_menu)
+	b.restart_requested.connect(_start_battle)
+	_set_screen(b)
+
 
 func _start_battle() -> void:
 	var b := Battle.new()

@@ -80,5 +80,49 @@ func _run() -> void:
 		await _frames(2)
 	await _frames(120)
 	await _shot("6_result")
-	print("UI 점검 완료: 내 턴 %d번, 승자 %d, 오버레이 %s" % [my_turns, game.winner, str(battle.overlay.visible)])
+	print("UI 대전 점검: 내 턴 %d번, 승자 %d, 오버레이 %s" % [my_turns, game.winner, str(battle.overlay.visible)])
+	await _run_tutorial(main)
+	print("UI 점검 완료")
 	quit()
+
+
+## 튜토리얼을 화면 그대로 따라가며 끝까지 진행
+func _run_tutorial(main) -> void:
+	main._start_tutorial()
+	await _frames(10)
+	var battle = main.screen
+	battle.fast = true
+	var tut = battle.tutorial
+	var game = battle.game
+	var shots := {0: "7_tutorial_start", 3: "8_tutorial_coin", 10: "9_tutorial_attack", 14: "10_tutorial_taunt"}
+	var taken := {}
+	var guard := 0
+	while tut.active and game.phase == "play" and guard < 400:
+		guard += 1
+		if game.current != 0 or battle.busy:
+			await _frames(2)
+			continue
+		var idx: int = tut.index
+		if shots.has(idx) and not taken.has(idx):
+			taken[idx] = true
+			await _frames(30)
+			await _shot(shots[idx])
+		var a: Dictionary = tut.auto_action(game)
+		if a.get("next", false):
+			if not battle.coach.visible or not battle.coach_btn.visible:
+				print("UI 행동 실패: 튜토리얼 [다음] 버튼이 안 보임 (단계 %d)" % (idx + 1))
+				break
+			battle._on_coach_next()
+		elif a.get("type", "") == "end":
+			battle._on_end_pressed()
+		elif not a.is_empty():
+			if not battle._do(a):
+				print("UI 행동 실패: 튜토리얼 단계 %d 행동 %s" % [idx + 1, str(a)])
+				break
+		else:
+			print("UI 행동 실패: 튜토리얼 단계 %d에서 멈춤" % (idx + 1))
+			break
+		await _frames(3)
+	print("UI 튜토리얼 점검: 끝까지 진행 %s, 상대 체력 %d" % [str(not tut.active), game.players[1].hp])
+	if tut.active:
+		print("UI 행동 실패: 튜토리얼이 끝나지 않음")

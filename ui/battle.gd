@@ -13,6 +13,9 @@ const CardView = preload("res://ui/card_view.gd")
 const HeroView = preload("res://ui/hero_view.gd")
 const PlayerState = preload("res://core/player_state.gd")
 const CardInst = preload("res://core/card_inst.gd")
+const Tutorial = preload("res://ui/tutorial.gd")
+const Settings = preload("res://ui/settings.gd")
+const FocusFrame = preload("res://ui/focus_frame.gd")
 
 const ME := 0
 const OP := 1
@@ -22,6 +25,9 @@ const AI_DELAY := 0.7
 var my_hero := "fire"
 var op_hero := "steel"
 var ai_level := 1
+## 메뉴에서 "튜토리얼"로 시작했는지
+var tutorial_mode := false
+var tutorial: Tutorial = null
 
 var game: Game
 var ai: AI
@@ -48,6 +54,12 @@ var fx_layer: Control
 var overlay: Control
 var hint_label: Label
 var left_area: VBoxContainer
+var coach: PanelContainer
+var coach_title: Label
+var coach_text: Label
+var coach_btn: Button
+var coach_skip: Button
+var focus_frame: FocusFrame
 
 var busy := false
 var sel: Dictionary = {}
@@ -62,12 +74,21 @@ var _banner_label: Label = null
 var _reveal_view: Control = null
 ## 자동 점검용: 대기 시간을 거의 0으로
 var fast := false
+var _detail_btns: Dictionary = {}
+## 도움말 팁 대기열 [[key, text], ...]
+var _tips: Array = []
+var _tips_queued: Dictionary = {}
 
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	_build()
 	_start_game()
+
+
+func _process(_delta: float) -> void:
+	if focus_frame != null:
+		focus_frame.set_target(_focus_rect(_focus_key()))
 
 
 # ─────────────────────────────── 화면 구성 ───────────────────────────────
@@ -245,6 +266,47 @@ func _build() -> void:
 	hint_label.add_theme_constant_override("outline_size", 8)
 	fx_layer.add_child(hint_label)
 
+	focus_frame = FocusFrame.new()
+	fx_layer.add_child(focus_frame)
+
+	coach = PanelContainer.new()
+	var csb := Art.panel_style(Color(0.06, 0.07, 0.1, 0.94), Color("#facc15"), 3, 14)
+	csb.content_margin_left = 18
+	csb.content_margin_right = 18
+	csb.content_margin_top = 12
+	csb.content_margin_bottom = 12
+	coach.add_theme_stylebox_override("panel", csb)
+	coach.custom_minimum_size = Vector2(760, 0)
+	coach.visible = false
+	fx_layer.add_child(coach)
+	var cv := VBoxContainer.new()
+	cv.add_theme_constant_override("separation", 8)
+	coach.add_child(cv)
+	var ch := HBoxContainer.new()
+	cv.add_child(ch)
+	coach_title = _label("", 18, Art.COL_SEL, true)
+	coach_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	ch.add_child(coach_title)
+	coach_skip = Button.new()
+	coach_skip.text = "튜토리얼 건너뛰기"
+	coach_skip.add_theme_font_size_override("font_size", 16)
+	coach_skip.pressed.connect(_on_coach_skip)
+	ch.add_child(coach_skip)
+	coach_text = _label("", 23, Art.COL_TEXT)
+	coach_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	coach_text.custom_minimum_size = Vector2(720, 0)
+	cv.add_child(coach_text)
+	var cb := HBoxContainer.new()
+	cb.alignment = BoxContainer.ALIGNMENT_END
+	cv.add_child(cb)
+	coach_btn = Button.new()
+	coach_btn.text = "다음"
+	coach_btn.custom_minimum_size = Vector2(160, 48)
+	coach_btn.add_theme_font_size_override("font_size", 22)
+	Art.accent_button(coach_btn, Color("#ca8a04"))
+	coach_btn.pressed.connect(_on_coach_next)
+	cb.add_child(coach_btn)
+
 	overlay = Control.new()
 	overlay.visible = false
 	add_child(overlay)
@@ -302,14 +364,23 @@ func _start_game() -> void:
 	game.game_event.connect(_on_game_event)
 	ai = AI.new()
 	ai.level = ai_level
-	game.mulligan(OP, [])
+	if tutorial_mode:
+		tutorial = Tutorial.new()
+		ai.level = 0
+		tutorial.setup(game)
+	else:
+		game.mulligan(OP, [])
 	log_label.clear()
 	for l in game.log_lines:
 		_on_log(l)
 	op_hero_view.setup(game.players[OP])
 	me_hero_view.setup(game.players[ME])
 	_refresh()
-	_show_mulligan()
+	if tutorial_mode:
+		_banner("튜토리얼", Art.COL_SEL)
+		_update_coach()
+	else:
+		_show_mulligan()
 
 
 func _idle() -> bool:
@@ -317,12 +388,24 @@ func _idle() -> bool:
 
 
 func _do(a: Dictionary) -> bool:
+	if tutorial != null and tutorial.active:
+		var msg := tutorial.allows(a, game)
+		if msg != "":
+			_show_hint(msg)
+			_refresh()
+			return false
 	_snapshot_positions()
 	var ok := game.apply_action(ME, a)
 	if not ok:
 		_show_hint("지금은 할 수 없는 행동입니다")
+	if tutorial != null:
+		var was_active := tutorial.active
+		tutorial.after_action(a, ok)
+		if was_active and not tutorial.active:
+			_banner("튜토리얼 완료!", Art.COL_OK)
 	_refresh()
 	_flush_fx()
+	_update_coach()
 	_check_over()
 	return ok
 
@@ -346,7 +429,11 @@ func _run_ai() -> void:
 	var guard := 0
 	while my_id == _run_id and game.phase == "play" and game.current == OP and guard < 200:
 		guard += 1
-		var a: Dictionary = ai.choose_action(game, OP)
+		var a: Dictionary = {}
+		if tutorial != null:
+			a = tutorial.op_action(game)
+		if a.is_empty():
+			a = ai.choose_action(game, OP)
 		if a.is_empty():
 			break
 		_snapshot_positions()
@@ -369,6 +456,8 @@ func _run_ai() -> void:
 		_check_over()
 	else:
 		_banner("내 턴", Art.COL_OK)
+		_on_my_turn_start()
+	_update_coach()
 
 
 func _wait(sec: float) -> void:
@@ -534,6 +623,7 @@ func _update_buttons() -> void:
 func _update_detail() -> void:
 	_clear(detail_holder)
 	_clear(detail_actions)
+	_detail_btns.clear()
 	var me: PlayerState = game.players[ME]
 	var kind: String = sel.get("kind", "")
 	var data: Dictionary = {}
@@ -552,7 +642,7 @@ func _update_detail() -> void:
 				data = CardDB.cards[game.market[mi]]
 				price = game.price(ME, game.market[mi])
 				var err: String = game.buy_error(ME, mi)
-				_action_button("구매하기 (%d골드)" % price if err == "" else "구매 불가: " + err, err == "", _on_buy_pressed, Color("#d97706"))
+				_action_button("구매하기 (%d골드)" % price if err == "" else "구매 불가: " + err, err == "", _on_buy_pressed, Color("#d97706"), "buy")
 		"unit":
 			var side := int(sel["side"])
 			var ui := int(sel["index"])
@@ -562,7 +652,7 @@ func _update_detail() -> void:
 				data = inst.data
 				if side == ME and _idle():
 					var aerr: String = game.attack_error(ME, ui)
-					_action_button("공격하기" if aerr == "" else aerr, aerr == "", _on_attack_btn, Color("#dc2626"))
+					_action_button("공격하기" if aerr == "" else aerr, aerr == "", _on_attack_btn, Color("#dc2626"), "attack")
 		"field":
 			if game.field != null:
 				inst = game.field
@@ -598,15 +688,17 @@ func _update_detail() -> void:
 
 func _detail_hand_buttons(i: int) -> void:
 	var err: String = game.play_error(ME, i)
-	_action_button("사용하기" if err == "" else "사용 불가: " + err, err == "", _on_use_pressed, Color("#2563eb"))
+	_action_button("사용하기" if err == "" else "사용 불가: " + err, err == "", _on_use_pressed, Color("#2563eb"), "use")
 	var perr: String = game.pitch_error(ME, i)
-	_action_button("버리기 → 골드 +1", perr == "", _on_pitch_pressed, Color("#b45309"))
+	_action_button("버리기 → 골드 +1", perr == "", _on_pitch_pressed, Color("#b45309"), "pitch")
 	var cerr: String = game.clean_error(ME, i)
-	_action_button("정리 (2골드, 영구 제거)" if cerr == "" else "정리 불가: " + cerr, cerr == "", _on_clean_pressed, Color("#475569"))
+	_action_button("정리 (2골드, 영구 제거)" if cerr == "" else "정리 불가: " + cerr, cerr == "", _on_clean_pressed, Color("#475569"), "clean")
 
 
-func _action_button(text: String, enabled: bool, cb: Callable, col: Color) -> void:
+func _action_button(text: String, enabled: bool, cb: Callable, col: Color, key: String = "") -> void:
 	var b := Button.new()
+	if key != "":
+		_detail_btns[key] = b
 	b.text = text
 	b.disabled = not enabled
 	b.custom_minimum_size = Vector2(0, 52)
@@ -680,7 +772,11 @@ func _begin_targeting(action: Dictionary, targets: Array, hint: String) -> void:
 
 func _try_target(t: Dictionary) -> void:
 	if not Game.target_in(targeting["targets"], t):
-		_show_hint("그 대상은 고를 수 없습니다")
+		if targeting.get("type", "") == "attack" and int(t["side"]) == OP and int(t["slot"]) < 0:
+			_show_hint("도발 유닛이 있어서 영웅을 공격할 수 없어요. 도발 유닛부터 공격하세요!")
+			_queue_tip("taunt", "도발: 상대 필드에 '도발' 유닛(두꺼운 회색 테두리)이 있으면, 유닛으로는 그 도발 유닛만 공격할 수 있어요.\n도발을 먼저 처치하거나, 주문·영웅 능력으로 처리하세요. (주문은 도발과 상관없이 영웅을 노릴 수 있어요)")
+		else:
+			_show_hint("그 대상은 고를 수 없습니다")
 		return
 	var a := targeting.duplicate()
 	a.erase("targets")
@@ -702,9 +798,14 @@ func _on_unit_pressed(_v: Control, side: int, i: int) -> void:
 		_try_target({"side": side, "slot": i})
 		return
 	sel = {"kind": "unit", "side": side, "index": i}
-	if side == ME and _idle() and game.attack_error(ME, i) == "":
-		_begin_targeting({"type": "attack", "unit": i}, game.attack_targets(ME), "공격할 대상을 고르세요")
-		return
+	if side == ME and _idle():
+		var err: String = game.attack_error(ME, i)
+		if err == "":
+			_begin_targeting({"type": "attack", "unit": i}, game.attack_targets(ME), "공격할 대상을 고르세요")
+			return
+		_show_hint(err)
+		if err.begins_with("이번 턴에 낸"):
+			_queue_tip("sleep", "유닛은 낸 다음 턴부터 공격할 수 있어요. ('Zz' 표시)\n바로 공격하는 '돌진' 키워드 유닛은 예외예요.")
 	_refresh()
 
 
@@ -850,9 +951,11 @@ func _snapshot_positions() -> void:
 func _on_game_event(kind: String, info: Dictionary) -> void:
 	match kind:
 		"damage", "heal":
-			_pending_fx.append({"kind": kind, "key": _key_of(info["obj"]), "amount": int(info["amount"])})
+			_pending_fx.append({"kind": kind, "key": _key_of(info["obj"]), "amount": int(info["amount"]), "armor": int(info.get("armor", 0))})
 		"trap":
 			_pending_fx.append({"kind": "trap", "name": info["card"].display_name(), "player": int(info["player"])})
+			if int(info["player"]) == OP:
+				_queue_tip("trap", "상대의 함정이 발동했어요! 함정은 뒷면으로 놓였다가, 내 턴에 조건이 맞으면 자동으로 발동해요.\n상대 함정 칸의 '?' 카드를 조심하세요. (그림자 군주는 상대 함정을 모두 파괴해요)")
 		"play":
 			if int(info["player"]) == OP:
 				_pending_fx.append({"kind": "reveal", "card": info["card"]})
@@ -879,8 +982,23 @@ func _flush_fx() -> void:
 		match fx["kind"]:
 			"damage":
 				if _pos_cache.has(fx["key"]):
-					var txt: String = "막힘" if int(fx["amount"]) == 0 else "-%d" % int(fx["amount"])
-					_float_text(_pos_cache[fx["key"]] + Vector2(0, offset % 3 * 8), txt, Color("#ff4d4d"))
+					var pos: Vector2 = _pos_cache[fx["key"]] + Vector2(0, offset % 3 * 8)
+					var amount := int(fx["amount"])
+					var armor := int(fx.get("armor", 0))
+					if amount == 0:
+						_float_text(pos, "막힘", Color("#fde047"))
+					elif armor > 0:
+						_float_text(pos + Vector2(-70, 0), "방어도 -%d" % armor, Color("#cbd5e1"))
+						if amount > armor:
+							_float_text(pos + Vector2(60, 0), "-%d" % (amount - armor), Color("#ff4d4d"))
+						if fx["key"] == "h1":
+							_queue_tip("armor", "상대 영웅의 '방어도'(체력 옆 회색 방패 숫자)가 피해를 먼저 막았어요.\n방어도가 0이 되어야 체력이 줄어들어요. 강철 영웅 로완은 영웅 능력으로 방어도를 쌓아요.")
+					else:
+						_float_text(pos, "-%d" % amount, Color("#ff4d4d"))
+					if fx["key"] == "h0" and amount > armor:
+						me_hero_view.flash()
+					elif fx["key"] == "h1" and amount > armor:
+						op_hero_view.flash()
 			"heal":
 				if _pos_cache.has(fx["key"]):
 					_float_text(_pos_cache[fx["key"]], "+%d" % int(fx["amount"]), Color("#4ade80"))
@@ -1025,9 +1143,11 @@ func _on_mull_confirm() -> void:
 		_run_ai()
 	else:
 		_banner("내 턴", Art.COL_OK)
+		_on_my_turn_start()
 
 
 func _show_game_over() -> void:
+	coach.visible = false
 	var me: PlayerState = game.players[ME]
 	var op: PlayerState = game.players[OP]
 	var v := _modal()
@@ -1062,3 +1182,174 @@ func _show_game_over() -> void:
 	menu.add_theme_font_size_override("font_size", 26)
 	menu.pressed.connect(func(): exit_to_menu.emit())
 	row.add_child(menu)
+
+
+# ─────────────────────────────── 튜토리얼 / 도움말 ───────────────────────────────
+
+func _on_my_turn_start() -> void:
+	var me: PlayerState = game.players[ME]
+	if me.turn_count == 1:
+		_queue_tip("basics", "카드를 누르면 오른쪽 아래에서 [사용하기] / [버리기]를 고를 수 있어요.\n초록 테두리 = 지금 쓸 수 있는 카드, 공격할 수 있는 유닛이에요.\n유닛으로 공격하려면: 내 유닛 → 상대 영웅(또는 유닛) 순서로 누르세요.")
+	elif me.turn_count == 2:
+		_queue_tip("pitch", "남는 카드는 [버리기]로 골드 1로 바꾸세요. 손패는 매 턴 5장까지 다시 채워져요.\n골드로 시장에서 좋은 카드를 사면 덱이 강해져요. 내 영웅과 같은 진영 카드는 1골드 할인!")
+	elif me.turn_count == 12:
+		_queue_tip("collapse", "다음 턴부터 '붕괴'가 시작돼요. 13번째 턴부터 매 턴 시작할 때 영웅이 1, 2, 3… 피해를 받아요.\n게임이 너무 길어지지 않게 하는 규칙이에요. 체력이 많은 쪽이 유리해요!")
+
+
+func _queue_tip(key: String, text: String) -> void:
+	if tutorial != null and tutorial.active:
+		return
+	if fast or not Settings.tips_on():
+		return
+	if Settings.tip_seen(key) or _tips_queued.has(key):
+		return
+	_tips_queued[key] = true
+	_tips.append([key, text])
+	_update_coach()
+
+
+func _mark_basic_tips() -> void:
+	for k in ["basics", "pitch", "taunt", "sleep"]:
+		Settings.mark_tip(k)
+
+
+func _update_coach() -> void:
+	if coach == null or game == null:
+		return
+	var want := false
+	if tutorial != null and tutorial.active:
+		var st := tutorial.current()
+		if not st.is_empty() and game.phase == "play" and game.current == ME and not busy:
+			want = true
+			coach_title.text = tutorial.step_label()
+			coach_text.text = st["text"]
+			coach_btn.visible = st.get("next", false)
+			coach_btn.text = "다음"
+			coach_skip.visible = true
+	elif not _tips.is_empty() and game.phase == "play" and not overlay.visible:
+		want = true
+		coach_title.text = "도움말"
+		coach_text.text = _tips[0][1]
+		coach_btn.visible = true
+		coach_btn.text = "알겠어요"
+		coach_skip.visible = false
+	coach.visible = want
+	if want:
+		_place_coach.call_deferred()
+
+
+func _place_coach() -> void:
+	coach.reset_size()
+	var area := left_area.get_global_rect()
+	var avoid := _focus_rect(_focus_key())
+	var x := area.position.x + (area.size.x - coach.size.x) / 2.0
+	var ys := [
+		area.position.y + area.size.y * 0.36 - coach.size.y / 2.0,
+		area.position.y + 112.0,
+		area.position.y + area.size.y - coach.size.y - 8.0,
+	]
+	var y: float = ys[0]
+	if avoid.size != Vector2.ZERO:
+		for cand in ys:
+			var cy: float = cand
+			if not Rect2(Vector2(x, cy), coach.size).intersects(avoid.grow(16)):
+				y = cy
+				break
+	coach.position = Vector2(x, y) - fx_layer.global_position
+
+
+func _on_coach_next() -> void:
+	if tutorial != null and tutorial.active and tutorial.current().get("next", false):
+		tutorial.advance()
+		if not tutorial.active:
+			_banner("튜토리얼 완료!", Art.COL_OK)
+			_mark_basic_tips()
+	elif not _tips.is_empty():
+		var t: Array = _tips.pop_front()
+		Settings.mark_tip(t[0])
+	_refresh()
+	_update_coach()
+
+
+func _on_coach_skip() -> void:
+	if tutorial != null and tutorial.active:
+		tutorial.finish()
+		_mark_basic_tips()
+		_show_hint("튜토리얼을 건너뛰었어요. 이제 자유롭게 플레이하세요!")
+	_refresh()
+	_update_coach()
+
+
+## 튜토리얼에서 지금 눌러야 할 곳
+func _focus_key() -> String:
+	if tutorial == null or not tutorial.active or game == null:
+		return ""
+	if game.phase != "play" or game.current != ME or busy:
+		return ""
+	var st := tutorial.current()
+	if st.is_empty():
+		return ""
+	if st.get("next", false) or st.get("free", false):
+		return st.get("focus", "")
+	var ex: Dictionary = st["expect"]
+	var me: PlayerState = game.players[ME]
+	match ex["type"]:
+		"play", "pitch":
+			if not targeting.is_empty():
+				return "op_units" if ex.get("target", "") == "op_unit" else "op_hero"
+			var i := int(sel.get("index", -1))
+			if sel.get("kind", "") == "hand" and i >= 0 and i < me.hand.size() and me.hand[i].id == ex["card"]:
+				return "btn:use" if ex["type"] == "play" else "btn:pitch"
+			return "hand_card:" + ex["card"]
+		"buy":
+			var mi := int(sel.get("index", -1))
+			if sel.get("kind", "") == "market" and mi >= 0 and mi < game.market.size() and game.market[mi] == ex["card"]:
+				return "btn:buy"
+			return "market:" + ex["card"]
+		"attack":
+			return "op_hero" if not targeting.is_empty() else "my_unit"
+		"power":
+			return "op_units" if not targeting.is_empty() else "power"
+		"end":
+			return "end"
+	return ""
+
+
+func _focus_rect(key: String) -> Rect2:
+	match key:
+		"":
+			return Rect2()
+		"op_hero":
+			return op_hero_view.get_global_rect()
+		"me_info":
+			return me_info.get_global_rect()
+		"hand":
+			return hand_area.get_global_rect()
+		"end":
+			return end_btn.get_global_rect()
+		"power":
+			return power_btn.get_global_rect()
+		"my_unit", "op_units":
+			var box := me_board if key == "my_unit" else op_board
+			var r := Rect2()
+			for c in box.get_children():
+				if c is CardView:
+					r = c.get_global_rect() if r.size == Vector2.ZERO else r.merge(c.get_global_rect())
+					if key == "my_unit":
+						break
+			return r
+	if key.begins_with("hand_card:"):
+		var id := key.substr(10)
+		for c in hand_area.get_children():
+			if c is CardView and c.inst != null and c.inst.id == id:
+				return c.get_global_rect()
+	elif key.begins_with("market:"):
+		var mid := key.substr(7)
+		for c in market_box.get_children():
+			if c is CardView and c.data.get("id", "") == mid:
+				return c.get_global_rect()
+	elif key.begins_with("btn:"):
+		var b = _detail_btns.get(key.substr(4), null)
+		if b != null and is_instance_valid(b):
+			return b.get_global_rect()
+	return Rect2()

@@ -53,6 +53,12 @@ jobs:
           ~/godot/godot --headless --path . -s res://tests/sim.gd -- 300 2>&1 | tee sim.log
           if grep -E "SCRIPT ERROR|Parse Error|행동 실패:" sim.log; then exit 1; fi
 
+      - name: Rules unit tests
+        run: |
+          ~/godot/godot --headless --path . -s res://tests/rules_test.gd 2>&1 | tee rules.log
+          if grep -E "SCRIPT ERROR|Parse Error|규칙 테스트 실패" rules.log; then exit 1; fi
+          grep "규칙 테스트:" rules.log
+
       - name: UI test (play one game through the UI, screenshots)
         run: |
           mkdir -p shots && touch shots/.gdignore

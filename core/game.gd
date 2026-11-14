@@ -800,12 +800,16 @@ func _damage(obj: Variant, amount: int, source: CardInst) -> int:
 	if amount <= 0 or obj == null:
 		return 0
 	var dealt := 0
+	var absorbed := 0
 	if obj is PlayerState:
-		var absorbed := mini(obj.armor, amount)
+		absorbed = mini(obj.armor, amount)
 		obj.armor -= absorbed
 		obj.hp -= amount - absorbed
 		dealt = amount
-		_log("  %s 영웅: %d 피해 (체력 %d)" % [obj.name, amount, obj.hp])
+		if absorbed > 0:
+			_log("  %s 영웅: %d 피해 → 방어도가 %d 막음, 체력 -%d (남은 체력 %d)" % [obj.name, amount, absorbed, amount - absorbed, obj.hp])
+		else:
+			_log("  %s 영웅: %d 피해 (남은 체력 %d)" % [obj.name, amount, obj.hp])
 	else:
 		var u: CardInst = obj
 		if u.is_dead():
@@ -819,7 +823,7 @@ func _damage(obj: Variant, amount: int, source: CardInst) -> int:
 		dealt = amount
 		if source != null and source.has_kw("poison"):
 			u.destroyed = true
-	game_event.emit("damage", {"obj": obj, "amount": dealt})
+	game_event.emit("damage", {"obj": obj, "amount": dealt, "armor": absorbed})
 	if source != null and source.has_kw("lifesteal") and dealt > 0:
 		_heal(players[source.owner], dealt)
 	return dealt
