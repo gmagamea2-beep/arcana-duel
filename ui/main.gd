@@ -153,7 +153,7 @@ func _hero_panel(hid: String) -> PanelContainer:
 	var hd: Dictionary = CardDB.heroes[hid]
 	var pd: Dictionary = CardDB.powers[hd["power"]]
 	var p := PanelContainer.new()
-	p.custom_minimum_size = Vector2(300, 360)
+	p.custom_minimum_size = Vector2(320, 380)
 	p.mouse_filter = Control.MOUSE_FILTER_STOP
 	p.gui_input.connect(_on_hero_input.bind(hid))
 	var v := VBoxContainer.new()
@@ -170,10 +170,10 @@ func _hero_panel(hid: String) -> PanelContainer:
 	v.add_child(tex)
 	v.add_child(_label(hd["name"], 34, Art.COL_TEXT, true))
 	v.add_child(_label("%s · %s 진영" % [hd["title"], CardDB.FACTION_NAMES[hd["faction"]]], 19, Art.FACTION_ACCENT[hd["faction"]]))
-	var desc := _label(hd["desc"], 18, Art.COL_SUB)
+	var desc := _label(hd["desc"], 20, Art.COL_SUB)
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(desc)
-	var pw := _label("영웅 능력 · %s\n%s (%d마나)" % [pd["name"], pd["text"], int(pd["cost"])], 18, Art.COL_TEXT)
+	var pw := _label("영웅 능력 · %s\n%s (%d마나)" % [pd["name"], pd["text"], int(pd["cost"])], 20, Art.COL_TEXT)
 	pw.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	v.add_child(pw)
 	return p

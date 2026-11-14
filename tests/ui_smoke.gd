@@ -6,6 +6,7 @@ extends SceneTree
 const AI = preload("res://ai/simple_ai.gd")
 
 var _out := ""
+var _attack_checked := false
 var _frames_total := 0
 
 
@@ -57,7 +58,7 @@ func _run() -> void:
 				await _frames(40)
 				await _shot(shots[t])
 				battle.sel = {}
-			if t == 2 or t == 3:
+			if t == 2 or (t >= 3 and not _attack_checked):
 				await _drag_checks(battle, t)
 			var steps := 0
 			while game.phase == "play" and game.current == 0 and steps < 120:
@@ -192,5 +193,7 @@ func _drag_checks(battle, turn: int) -> void:
 					print("UI 행동 실패: 드래그로 공격 안 됨")
 				else:
 					print("드래그 점검: 공격 OK")
+				_attack_checked = true
 				break
-	await _shot("drag_turn%d" % turn)
+	if turn == 2:
+		await _shot("drag_turn2")
