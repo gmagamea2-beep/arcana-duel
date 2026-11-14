@@ -4,6 +4,9 @@
 name: Build EXE + APK
 
 on:
+  push:
+    branches: [main, ccr-4c407fa2-hrzdcb]
+    paths-ignore: ["docs/**", "**.md"]
   workflow_dispatch:
 
 permissions:
