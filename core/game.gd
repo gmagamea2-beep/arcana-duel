@@ -417,6 +417,7 @@ func pitch(pi: int, hi: int) -> bool:
 	p.discard.append(c)
 	p.gold = mini(MAX_GOLD, p.gold + 1)
 	_log("%s: %s 버림 → 골드 +1" % [p.name, c.display_name()])
+	game_event.emit("pitch", {"player": pi, "card": c})
 	changed.emit()
 	return true
 
@@ -448,7 +449,7 @@ func buy(pi: int, mi: int) -> bool:
 	market[mi] = ""
 	market[mi] = _roll_market_card()
 	_log("%s: %s 구매 (%d골드)" % [p.name, c.display_name(), pr])
-	game_event.emit("buy", {"card": c, "player": pi})
+	game_event.emit("buy", {"card": c, "player": pi, "slot": mi})
 	_fire_traps(1 - pi, "enemy_buy", {})
 	_after_action()
 	return true
@@ -623,13 +624,17 @@ func _draw(p: PlayerState, n: int, silent: bool = false) -> void:
 			_shuffle(p.deck)
 			if not silent:
 				_log("  %s: 버린 더미를 섞어 새 덱을 만듭니다" % p.name)
+				game_event.emit("shuffle", {"player": p.idx, "count": p.deck.size()})
 		var c: CardInst = p.deck.pop_back()
 		if p.hand.size() >= HAND_LIMIT:
 			p.discard.append(c)
 			if not silent:
 				_log("  %s: 손패가 가득 차 %s 버려짐" % [p.name, c.display_name()])
+				game_event.emit("draw", {"player": p.idx, "card": c, "burn": true})
 		else:
 			p.hand.append(c)
+			if not silent:
+				game_event.emit("draw", {"player": p.idx, "card": c, "burn": false})
 
 
 func _roll_market_card() -> String:

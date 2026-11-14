@@ -16,6 +16,8 @@ const CardInst = preload("res://core/card_inst.gd")
 const Tutorial = preload("res://ui/tutorial.gd")
 const Settings = preload("res://ui/settings.gd")
 const FocusFrame = preload("res://ui/focus_frame.gd")
+const PileView = preload("res://ui/pile_view.gd")
+const DragArrow = preload("res://ui/drag_arrow.gd")
 
 const ME := 0
 const OP := 1
@@ -60,6 +62,13 @@ var coach_text: Label
 var coach_btn: Button
 var coach_skip: Button
 var focus_frame: FocusFrame
+var deck_pile: PileView
+var discard_pile: PileView
+var hand_row: HBoxContainer
+var drag_arrow: DragArrow
+var drag_ghost: Control = null
+var drop_zone: PanelContainer
+var drop_zone_label: Label
 
 var busy := false
 var sel: Dictionary = {}
@@ -75,6 +84,10 @@ var _reveal_view: Control = null
 ## 자동 점검용: 대기 시간을 거의 0으로
 var fast := false
 var _detail_btns: Dictionary = {}
+## 끌기 중인 정보 {"kind", "index", "view", "targets", "arrow"}
+var _drag: Dictionary = {}
+## 드로우 연출이 끝날 때까지 손패에서 숨겨 둘 카드 uid
+var _anim_hidden: Dictionary = {}
 ## 도움말 팁 대기열 [[key, text], ...]
 var _tips: Array = []
 var _tips_queued: Dictionary = {}
@@ -124,7 +137,7 @@ func _build() -> void:
 	op_hero_view = HeroView.new()
 	op_hero_view.pressed.connect(_on_hero_pressed.bind(OP))
 	op_bar.add_child(op_hero_view)
-	op_info = _label("", 20, Art.COL_SUB)
+	op_info = _label("", 22, Art.COL_SUB)
 	op_bar.add_child(op_info)
 	op_bar.add_child(_spacer())
 	op_bar.add_child(_label("함정", 18, Art.COL_SUB))
@@ -159,11 +172,11 @@ func _build() -> void:
 	me_hero_view.pressed.connect(_on_hero_pressed.bind(ME))
 	me_bar.add_child(me_hero_view)
 	power_btn = Button.new()
-	power_btn.custom_minimum_size = Vector2(280, 96)
-	power_btn.add_theme_font_size_override("font_size", 19)
+	power_btn.custom_minimum_size = Vector2(300, 100)
+	power_btn.add_theme_font_size_override("font_size", int(21 * Art.ts()))
 	power_btn.pressed.connect(_on_power_pressed)
 	me_bar.add_child(power_btn)
-	me_info = _label("", 22, Art.COL_TEXT, true)
+	me_info = _label("", 24, Art.COL_TEXT, true)
 	me_bar.add_child(me_info)
 	me_bar.add_child(_spacer())
 	me_bar.add_child(_label("함정", 18, Art.COL_SUB))
@@ -171,12 +184,24 @@ func _build() -> void:
 	me_traps_box.add_theme_constant_override("separation", 6)
 	me_bar.add_child(me_traps_box)
 
+	# 손패 줄: [덱] [손패] [버린 더미]
+	hand_row = HBoxContainer.new()
+	hand_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	hand_row.add_theme_constant_override("separation", 8)
+	hand_row.mouse_filter = Control.MOUSE_FILTER_PASS
+	left_area.add_child(hand_row)
+	deck_pile = PileView.new().setup("deck")
+	deck_pile.pressed.connect(_on_pile_pressed.bind("deck"))
+	hand_row.add_child(deck_pile)
 	hand_area = Control.new()
-	hand_area.custom_minimum_size = Vector2(0, 256)
-	hand_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	hand_area.custom_minimum_size = Vector2(0, 282)
+	hand_area.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hand_area.mouse_filter = Control.MOUSE_FILTER_PASS
 	hand_area.resized.connect(_layout_hand)
-	left_area.add_child(hand_area)
+	hand_row.add_child(hand_area)
+	discard_pile = PileView.new().setup("discard")
+	discard_pile.pressed.connect(_on_pile_pressed.bind("discard"))
+	hand_row.add_child(discard_pile)
 
 	# ── 오른쪽: 시장 + 자세히 보기 + 기록 ──
 	var right := PanelContainer.new()
@@ -195,7 +220,7 @@ func _build() -> void:
 	var head := HBoxContainer.new()
 	rv.add_child(head)
 	head.add_child(_label("시장", 28, Art.COL_TEXT, true))
-	var sub := _label("  산 카드는 내 버린 더미로", 16, Art.COL_SUB)
+	var sub := _label("  산 카드는 내 버린 더미로", 17, Art.COL_SUB)
 	sub.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(sub)
 	var exit_btn := Button.new()
@@ -213,7 +238,7 @@ func _build() -> void:
 	rv.add_child(btns)
 	refresh_btn = Button.new()
 	refresh_btn.text = "시장 갱신 (1골드)"
-	refresh_btn.add_theme_font_size_override("font_size", 19)
+	refresh_btn.add_theme_font_size_override("font_size", int(20 * Art.ts()))
 	refresh_btn.custom_minimum_size = Vector2(0, 56)
 	refresh_btn.pressed.connect(_on_refresh_pressed)
 	btns.add_child(refresh_btn)
@@ -221,7 +246,7 @@ func _build() -> void:
 	end_btn.text = "턴 종료"
 	end_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	end_btn.custom_minimum_size = Vector2(0, 56)
-	end_btn.add_theme_font_size_override("font_size", 26)
+	end_btn.add_theme_font_size_override("font_size", int(28 * Art.ts()))
 	Art.accent_button(end_btn, Color("#16a34a"))
 	end_btn.pressed.connect(_on_end_pressed)
 	btns.add_child(end_btn)
@@ -233,13 +258,13 @@ func _build() -> void:
 	dsb.content_margin_top = 8
 	dsb.content_margin_bottom = 8
 	detail.add_theme_stylebox_override("panel", dsb)
-	detail.custom_minimum_size = Vector2(0, 300)
+	detail.custom_minimum_size = Vector2(0, 326)
 	rv.add_child(detail)
 	var dh := HBoxContainer.new()
 	dh.add_theme_constant_override("separation", 10)
 	detail.add_child(dh)
 	detail_holder = CenterContainer.new()
-	detail_holder.custom_minimum_size = Vector2(200, 280)
+	detail_holder.custom_minimum_size = Vector2(220, 308)
 	dh.add_child(detail_holder)
 	detail_actions = VBoxContainer.new()
 	detail_actions.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -250,9 +275,9 @@ func _build() -> void:
 	log_label.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	log_label.scroll_following = true
 	log_label.bbcode_enabled = true
-	log_label.add_theme_font_size_override("normal_font_size", 16)
-	log_label.add_theme_font_size_override("bold_font_size", 16)
-	log_label.custom_minimum_size = Vector2(0, 90)
+	log_label.add_theme_font_size_override("normal_font_size", int(18 * Art.ts()))
+	log_label.add_theme_font_size_override("bold_font_size", int(18 * Art.ts()))
+	log_label.custom_minimum_size = Vector2(0, 60)
 	rv.add_child(log_label)
 
 	# ── 연출 / 팝업 층 ──
@@ -265,6 +290,19 @@ func _build() -> void:
 	hint_label.add_theme_color_override("font_outline_color", Color.BLACK)
 	hint_label.add_theme_constant_override("outline_size", 8)
 	fx_layer.add_child(hint_label)
+
+	drop_zone = PanelContainer.new()
+	drop_zone.add_theme_stylebox_override("panel", Art.panel_style(Color(0.2, 0.8, 0.4, 0.10), Color(0.3, 0.9, 0.5, 0.8), 4, 18))
+	drop_zone.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	drop_zone.visible = false
+	fx_layer.add_child(drop_zone)
+	drop_zone_label = _label("", 30, Color("#bbf7d0"), true)
+	drop_zone_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	drop_zone_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	drop_zone_label.add_theme_constant_override("outline_size", 8)
+	drop_zone.add_child(drop_zone_label)
+	drag_arrow = DragArrow.new()
+	fx_layer.add_child(drag_arrow)
 
 	focus_frame = FocusFrame.new()
 	fx_layer.add_child(focus_frame)
@@ -324,7 +362,7 @@ func _bar() -> HBoxContainer:
 func _board_row() -> HBoxContainer:
 	var b := HBoxContainer.new()
 	b.alignment = BoxContainer.ALIGNMENT_CENTER
-	b.custom_minimum_size = Vector2(0, 176)
+	b.custom_minimum_size = Vector2(0, 190)
 	b.add_theme_constant_override("separation", 12)
 	b.mouse_filter = Control.MOUSE_FILTER_PASS
 	return b
@@ -333,7 +371,7 @@ func _board_row() -> HBoxContainer:
 func _label(text: String, fsize: int, color: Color, use_bold: bool = false) -> Label:
 	var l := Label.new()
 	l.text = text
-	l.add_theme_font_size_override("font_size", fsize)
+	l.add_theme_font_size_override("font_size", int(round(fsize * Art.ts())))
 	l.add_theme_color_override("font_color", color)
 	if use_bold:
 		l.add_theme_font_override("font", Art.bold())
@@ -452,6 +490,7 @@ func _run_ai() -> void:
 		game.apply_action(OP, {"type": "end"})
 	busy = false
 	_refresh()
+	_flush_fx()
 	if game.phase == "over":
 		_check_over()
 	else:
@@ -482,7 +521,9 @@ func _refresh() -> void:
 	op_hero_view.queue_redraw()
 	me_hero_view.queue_redraw()
 	op_info.text = "손패 %d장\n덱 %d · 버린 더미 %d\n마나 %d/%d · 골드 %d" % [op.hand.size(), op.deck.size(), op.discard.size(), op.mana, op.max_mana, op.gold]
-	me_info.text = "마나  %d / %d\n골드  %d\n덱 %d · 버린 더미 %d" % [me.mana, me.max_mana, me.gold, me.deck.size(), me.discard.size()]
+	me_info.text = "마나  %d / %d\n골드  %d" % [me.mana, me.max_mana, me.gold]
+	deck_pile.set_state(me.deck.size())
+	discard_pile.set_state(me.discard.size(), me.discard.back().data if not me.discard.is_empty() else {})
 	_fill_traps(op_traps_box, op, false)
 	_fill_traps(me_traps_box, me, true)
 	_fill_board(op_board, op, OP)
@@ -522,7 +563,7 @@ func _fill_traps(box: HBoxContainer, p: PlayerState, own: bool) -> void:
 		box.add_child(v)
 	for k in range(p.traps.size(), game.trap_slots(p.idx)):
 		var empty := Panel.new()
-		empty.custom_minimum_size = Vector2(64, 84)
+		empty.custom_minimum_size = Vector2(70, 92)
 		empty.add_theme_stylebox_override("panel", Art.panel_style(Color(1, 1, 1, 0.03), Color("#3a4050"), 2, 8))
 		empty.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		box.add_child(empty)
@@ -534,6 +575,14 @@ func _fill_board(box: HBoxContainer, p: PlayerState, side: int) -> void:
 		var u: CardInst = p.board[i]
 		var v: CardView = CardView.new().setup(u.data, u, "board")
 		v.pressed.connect(_on_unit_pressed.bind(side, i))
+		v.set_meta("side", side)
+		v.set_meta("slot", i)
+		v.meta_info["show_sleep"] = side == game.current
+		if side == ME and _idle() and game.attack_error(ME, i) == "":
+			v.draggable = true
+			v.drag_started.connect(_on_drag_start.bind("unit", i))
+			v.drag_moved.connect(_on_drag_move)
+			v.drag_ended.connect(_on_drag_end)
 		var hl := _target_hl(side, i)
 		if hl == "" and sel.get("kind", "") == "unit" and int(sel.get("side", -1)) == side and int(sel.get("index", -1)) == i:
 			hl = "sel"
@@ -551,7 +600,7 @@ func _fill_field() -> void:
 		field_slot.add_child(_label("공용 필드 없음", 18, Color("#4b5263")))
 		return
 	var v: CardView = CardView.new().setup(game.field.data, game.field, "field")
-	v.custom_minimum_size = Vector2(220, 100)
+	v.custom_minimum_size = Vector2(230, 104)
 	v.caption = "주인: " + ("나" if game.field_owner == ME else "상대")
 	v.pressed.connect(_on_field_pressed)
 	if sel.get("kind", "") == "field":
@@ -566,6 +615,17 @@ func _fill_hand() -> void:
 		var c: CardInst = me.hand[i]
 		var v: CardView = CardView.new().setup(c.data, c, "hand")
 		v.pressed.connect(_on_hand_pressed.bind(i))
+		if _idle():
+			v.draggable = true
+			v.drag_started.connect(_on_drag_start.bind("hand", i))
+			v.drag_moved.connect(_on_drag_move)
+			v.drag_ended.connect(_on_drag_end)
+		if _anim_hidden.has(c.uid):
+			# 연출이 끝나면 다시 보임 (혹시 연출이 안 돌면 2.5초 뒤 자동으로 보임)
+			if Time.get_ticks_msec() - int(_anim_hidden[c.uid]) < 2500:
+				v.modulate.a = 0.0
+			else:
+				_anim_hidden.erase(c.uid)
 		var selected: bool = sel.get("kind", "") == "hand" and int(sel.get("index", -1)) == i
 		if selected:
 			v.set_highlight("sel")
@@ -581,7 +641,7 @@ func _layout_hand() -> void:
 	var n := cards.size()
 	if n == 0:
 		return
-	var cw := 170.0
+	var cw := 190.0
 	var w := hand_area.size.x
 	var step := cw + 12.0
 	if n > 1 and step * (n - 1) + cw > w:
@@ -607,6 +667,11 @@ func _fill_market() -> void:
 		if sel.get("kind", "") == "market" and int(sel.get("index", -1)) == i:
 			v.set_highlight("sel")
 		v.pressed.connect(_on_market_pressed.bind(i))
+		if _idle():
+			v.draggable = true
+			v.drag_started.connect(_on_drag_start.bind("market", i))
+			v.drag_moved.connect(_on_drag_move)
+			v.drag_ended.connect(_on_drag_end)
 		market_box.add_child(v)
 
 
@@ -624,12 +689,16 @@ func _update_detail() -> void:
 	_clear(detail_holder)
 	_clear(detail_actions)
 	_detail_btns.clear()
+	detail_holder.visible = sel.get("kind", "") != "pile"
 	var me: PlayerState = game.players[ME]
 	var kind: String = sel.get("kind", "")
 	var data: Dictionary = {}
 	var inst = null
 	var price := -1
 	match kind:
+		"pile":
+			_info_label(_pile_text(str(sel.get("which", "deck"))))
+			return
 		"hand":
 			var i := int(sel["index"])
 			if i < me.hand.size():
@@ -944,6 +1013,12 @@ func _snapshot_positions() -> void:
 		for v in box.get_children():
 			if v is CardView and v.inst != null:
 				_pos_cache["u%d" % v.inst.uid] = v.global_position + v.size / 2.0
+	for v in hand_area.get_children():
+		if v is CardView and v.inst != null:
+			_pos_cache["c%d" % v.inst.uid] = v.global_position + v.size / 2.0
+	for i in market_box.get_child_count():
+		var mv = market_box.get_child(i)
+		_pos_cache["m%d" % i] = mv.global_position + mv.size / 2.0
 	_pos_cache["h0"] = me_hero_view.global_position + me_hero_view.size / 2.0
 	_pos_cache["h1"] = op_hero_view.global_position + op_hero_view.size / 2.0
 
@@ -962,6 +1037,17 @@ func _on_game_event(kind: String, info: Dictionary) -> void:
 		"buy":
 			if int(info["player"]) == OP:
 				_pending_fx.append({"kind": "opbuy", "name": info["card"].display_name()})
+			_pending_fx.append({"kind": "buyfly", "player": int(info["player"]), "data": info["card"].data, "slot": int(info.get("slot", 0))})
+		"draw":
+			var c: CardInst = info["card"]
+			if int(info["player"]) == ME and not info.get("burn", false) and not fast:
+				_anim_hidden[c.uid] = Time.get_ticks_msec()
+			_pending_fx.append({"kind": "draw", "player": int(info["player"]), "uid": c.uid, "data": c.data, "burn": bool(info.get("burn", false))})
+		"shuffle":
+			_pending_fx.append({"kind": "shuffle", "player": int(info["player"])})
+		"pitch":
+			var pc: CardInst = info["card"]
+			_pending_fx.append({"kind": "pitch", "player": int(info["player"]), "uid": pc.uid, "data": pc.data})
 
 
 func _flush_fx() -> void:
@@ -978,8 +1064,21 @@ func _flush_fx() -> void:
 	var fxs := _pending_fx.duplicate()
 	_pending_fx.clear()
 	var offset := 0
+	var draw_n := 0
+	var base_delay := 0.0
 	for fx in fxs:
 		match fx["kind"]:
+			"draw":
+				_fx_draw(fx, base_delay + draw_n * 0.14)
+				draw_n += 1
+			"shuffle":
+				if int(fx["player"]) == ME:
+					_fx_shuffle()
+					base_delay += 0.45
+			"pitch":
+				_fx_pitch(fx)
+			"buyfly":
+				_fx_buy(fx)
 			"damage":
 				if _pos_cache.has(fx["key"]):
 					var pos: Vector2 = _pos_cache[fx["key"]] + Vector2(0, offset % 3 * 8)
@@ -1357,3 +1456,284 @@ func _focus_rect(key: String) -> Rect2:
 		if b != null and is_instance_valid(b):
 			return b.get_global_rect()
 	return Rect2()
+
+
+# ─────────────────────────────── 카드 이동 연출 ───────────────────────────────
+
+func _center(c: Control) -> Vector2:
+	return c.global_position + c.size / 2.0
+
+
+func _hand_view_by_uid(uid: int) -> CardView:
+	for v in hand_area.get_children():
+		if v is CardView and v.inst != null and v.inst.uid == uid:
+			return v
+	return null
+
+
+## 카드 한 장이 a → b 로 날아가는 연출. flip 이면 도착하면서 뒷면 → 앞면.
+func _fly(data: Dictionary, mode: String, a: Vector2, b: Vector2, s0: float, s1: float,
+		delay: float, dur: float, flip: bool, done: Callable = Callable()) -> void:
+	var g: CardView = CardView.new().setup(data, null, mode)
+	g.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	fx_layer.add_child(g)
+	g.position = a - g.size / 2.0 - fx_layer.global_position
+	g.scale = Vector2(s0, s0)
+	g.modulate.a = 0.0
+	var tw := g.create_tween()
+	tw.tween_interval(delay)
+	tw.tween_property(g, "modulate:a", 1.0, 0.04)
+	tw.tween_property(g, "position", b - g.size / 2.0 - fx_layer.global_position, dur).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(g, "scale", Vector2(s1, s1), dur)
+	if flip:
+		tw.tween_property(g, "scale:x", 0.0, 0.09)
+		tw.tween_callback(g.set_mode.bind("hand"))
+		tw.tween_property(g, "scale:x", s1, 0.09)
+	tw.tween_callback(_fly_done.bind(g, done))
+
+
+func _fly_done(g: Control, done: Callable) -> void:
+	if done.is_valid():
+		done.call()
+	g.queue_free()
+
+
+func _reveal_drawn(uid: int) -> void:
+	_anim_hidden.erase(uid)
+	var real := _hand_view_by_uid(uid)
+	if real != null:
+		real.modulate.a = 1.0
+
+
+func _fx_draw(fx: Dictionary, delay: float) -> void:
+	var uid := int(fx["uid"])
+	if fast:
+		_anim_hidden.erase(uid)
+		return
+	if int(fx["player"]) == OP:
+		var r := op_info.get_global_rect()
+		_fly(fx["data"], "back", r.position + Vector2(20, r.size.y / 2.0), r.position + Vector2(140, 10), 0.25, 0.25, delay, 0.3, false)
+		return
+	var from := _center(deck_pile)
+	if fx["burn"]:
+		_fly(fx["data"], "back", from, _center(discard_pile), 0.5, 0.45, delay, 0.45, true)
+		_show_hint("손패가 가득 차서 '%s'이(가) 버려졌어요 (최대 10장)" % fx["data"].get("name", ""))
+		return
+	var v := _hand_view_by_uid(uid)
+	var to := _center(v) if v != null else _center(hand_area)
+	_fly(fx["data"], "back", from, to, 0.55, 1.0, delay, 0.32, true, _reveal_drawn.bind(uid))
+
+
+func _fx_shuffle() -> void:
+	if fast:
+		return
+	_show_hint("덱이 비어서 버린 더미를 섞어 새 덱을 만들어요!")
+	for i in 4:
+		_fly({}, "back", _center(discard_pile), _center(deck_pile), 0.45, 0.45, i * 0.07, 0.3, false)
+
+
+func _fx_pitch(fx: Dictionary) -> void:
+	if fast:
+		return
+	if int(fx["player"]) == ME:
+		var from: Vector2 = _pos_cache.get("c%d" % int(fx["uid"]), _center(hand_area))
+		_fly(fx["data"], "hand", from, _center(discard_pile), 1.0, 0.45, 0.0, 0.3, false)
+		_float_text(_center(me_info) + Vector2(0, -10), "+1 골드", Art.COL_GOLD)
+	else:
+		var r := op_info.get_global_rect()
+		_fly(fx["data"], "hand", r.position + Vector2(140, 20), r.position + Vector2(200, 60), 0.3, 0.2, 0.0, 0.3, false)
+
+
+func _fx_buy(fx: Dictionary) -> void:
+	if fast:
+		return
+	var from: Vector2 = _pos_cache.get("m%d" % int(fx["slot"]), _center(market_box))
+	var to := _center(discard_pile) if int(fx["player"]) == ME else op_info.get_global_rect().get_center()
+	_fly(fx["data"], "hand", from, to, 0.6, 0.4, 0.0, 0.45, false)
+
+
+# ─────────────────────────────── 덱 / 버린 더미 목록 ───────────────────────────────
+
+func _on_pile_pressed(_v: Control, which: String) -> void:
+	if not _drag.is_empty():
+		return
+	targeting = {}
+	sel = {"kind": "pile", "which": which}
+	_refresh()
+
+
+func _pile_text(which: String) -> String:
+	var me: PlayerState = game.players[ME]
+	var cards: Array = me.deck if which == "deck" else me.discard
+	var counts := {}
+	for c in cards:
+		counts[c.display_name()] = counts.get(c.display_name(), 0) + 1
+	var names: Array = counts.keys()
+	names.sort()
+	var lines: Array = []
+	for n in names:
+		lines.append("· %s × %d" % [n, counts[n]])
+	var head := "내 덱 %d장 (뽑는 순서는 비밀)" % cards.size() if which == "deck" else "내 버린 더미 %d장\n(덱이 떨어지면 섞여서 덱이 돼요)" % cards.size()
+	if lines.is_empty():
+		lines.append("(비어 있음)")
+	return head + "\n\n" + "\n".join(PackedStringArray(lines))
+
+
+# ─────────────────────────────── 끌어다 놓기 ───────────────────────────────
+
+func _on_drag_start(view: Control, pos: Vector2, kind: String, index: int) -> void:
+	if not _idle():
+		return
+	targeting = {}
+	var d := {"kind": kind, "index": index, "view": view, "targets": [], "arrow": false}
+	match kind:
+		"hand":
+			var c: CardInst = game.players[ME].hand[index]
+			if c.data.has("target"):
+				d["targets"] = game.valid_targets(ME, c.data["target"])
+				d["arrow"] = true
+		"unit":
+			d["targets"] = game.attack_targets(ME)
+			d["arrow"] = true
+	_drag = d
+	if d["arrow"]:
+		view.set_highlight("sel")
+	else:
+		view.modulate.a = 0.35
+		var data: Dictionary = view.data
+		drag_ghost = CardView.new().setup(data, view.inst, "hand")
+		drag_ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		drag_ghost.scale = Vector2(0.85, 0.85)
+		drag_ghost.modulate.a = 0.92
+		fx_layer.add_child(drag_ghost)
+	# 놓을 수 있는 곳 표시
+	for t in d["targets"]:
+		var tv := _view_for_target(t)
+		if tv != null:
+			tv.set_highlight("target")
+	if kind == "hand":
+		discard_pile.set_highlight("sel")
+		if not d["arrow"]:
+			_show_drop_zone("여기에 놓으면 사용")
+	elif kind == "market":
+		_show_drop_zone("여기에 놓으면 구매")
+	var hints := {
+		"hand": "위쪽에 놓으면 사용 · 오른쪽 '버린 더미'에 놓으면 골드 +1",
+		"unit": "공격할 대상 위에 놓으세요",
+		"market": "왼쪽 전장으로 끌어오면 구매",
+	}
+	if d["arrow"] and kind == "hand":
+		_show_hint("대상 위에 놓으면 사용 · '버린 더미'에 놓으면 골드 +1")
+	else:
+		_show_hint(hints[kind])
+	_on_drag_move(view, pos)
+
+
+func _on_drag_move(view: Control, pos: Vector2) -> void:
+	if _drag.is_empty():
+		return
+	if drag_ghost != null:
+		drag_ghost.position = pos - drag_ghost.size / 2.0 - fx_layer.global_position
+	if _drag["arrow"]:
+		var col := Color("#f43f5e") if _drag["kind"] == "unit" else Color("#facc15")
+		drag_arrow.show_arrow(_center(view), pos, col)
+
+
+func _on_drag_end(view: Control, pos: Vector2) -> void:
+	if _drag.is_empty():
+		return
+	var d := _drag
+	_drag = {}
+	_end_drag_visuals(view)
+	var kind: String = d["kind"]
+	var index: int = d["index"]
+	var action := {}
+	match kind:
+		"hand":
+			if _over_discard(pos):
+				action = {"type": "pitch", "hand": index}
+			elif d["arrow"]:
+				var t := _target_at(pos)
+				if not t.is_empty() and Game.target_in(d["targets"], t):
+					action = {"type": "play", "hand": index, "target": t}
+				elif _in_play_zone(pos):
+					_show_hint("그 대상에는 쓸 수 없어요. 빛나는 대상 위에 놓으세요")
+			elif _in_play_zone(pos):
+				action = {"type": "play", "hand": index}
+		"unit":
+			var t2 := _target_at(pos)
+			if not t2.is_empty() and Game.target_in(d["targets"], t2):
+				action = {"type": "attack", "unit": index, "target": t2}
+			elif not t2.is_empty() and int(t2["side"]) == OP and int(t2["slot"]) < 0:
+				_show_hint("도발 유닛이 있어서 영웅을 공격할 수 없어요. 도발 유닛부터 공격하세요!")
+			elif not t2.is_empty():
+				_show_hint("그 대상은 공격할 수 없어요")
+		"market":
+			if left_area.get_global_rect().has_point(pos):
+				action = {"type": "buy", "market": index}
+	if action.is_empty():
+		_refresh()
+		return
+	var err := ""
+	match action["type"]:
+		"play":
+			err = game.play_error(ME, index)
+		"buy":
+			err = game.buy_error(ME, index)
+	if err != "":
+		_show_hint(err)
+		_refresh()
+		return
+	sel = {}
+	_do(action)
+
+
+func _end_drag_visuals(view: Control) -> void:
+	if drag_ghost != null:
+		drag_ghost.queue_free()
+		drag_ghost = null
+	drag_arrow.hide_arrow()
+	drop_zone.visible = false
+	discard_pile.set_highlight("")
+	if is_instance_valid(view):
+		view.modulate.a = 1.0
+
+
+func _show_drop_zone(text: String) -> void:
+	var r := Rect2(op_board.global_position, Vector2(left_area.size.x, me_board.get_global_rect().end.y - op_board.global_position.y))
+	drop_zone.position = r.position - fx_layer.global_position
+	drop_zone.size = r.size
+	drop_zone_label.text = text
+	drop_zone.visible = true
+
+
+func _over_discard(pos: Vector2) -> bool:
+	return discard_pile.get_global_rect().grow(24).has_point(pos)
+
+
+func _in_play_zone(pos: Vector2) -> bool:
+	var la := left_area.get_global_rect()
+	return la.has_point(pos) and pos.y < hand_row.global_position.y
+
+
+## 화면 좌표에 있는 영웅/유닛 → 대상 {"side","slot"}
+func _target_at(pos: Vector2) -> Dictionary:
+	if op_hero_view.get_global_rect().has_point(pos):
+		return {"side": OP, "slot": -1}
+	if me_hero_view.get_global_rect().has_point(pos):
+		return {"side": ME, "slot": -1}
+	for box in [op_board, me_board]:
+		for v in box.get_children():
+			if v is CardView and v.has_meta("slot") and v.get_global_rect().grow(6).has_point(pos):
+				return {"side": int(v.get_meta("side")), "slot": int(v.get_meta("slot"))}
+	return {}
+
+
+func _view_for_target(t: Dictionary) -> Control:
+	if int(t["slot"]) < 0:
+		return op_hero_view if int(t["side"]) == OP else me_hero_view
+	var box := op_board if int(t["side"]) == OP else me_board
+	for v in box.get_children():
+		if v is CardView and v.has_meta("slot") and int(v.get_meta("slot")) == int(t["slot"]):
+			return v
+	return null

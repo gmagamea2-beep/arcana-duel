@@ -135,6 +135,15 @@ func _show_menu() -> void:
 		Settings.reset_tips()
 		reset.text = "팁을 처음부터 다시 보여 줄게요")
 	opt.add_child(reset)
+	opt.add_child(_label("   글자 크기", 20, Art.COL_SUB))
+	for pair in [["보통", 1.0], ["크게", 1.15], ["아주 크게", 1.3]]:
+		var tb := Button.new()
+		tb.text = pair[0]
+		tb.toggle_mode = true
+		tb.button_pressed = absf(Art.ts() - float(pair[1])) < 0.01
+		tb.add_theme_font_size_override("font_size", 18)
+		tb.pressed.connect(_on_text_scale.bind(float(pair[1])))
+		opt.add_child(tb)
 	if not bool(Settings.get_value("tutorial_done", false)):
 		v.add_child(_label("처음이라면 [튜토리얼]부터 해 보세요! (5분)", 22, Art.COL_SEL, true))
 	v.add_child(_label("아이콘: game-icons.net (CC BY 3.0) · 글꼴: Pretendard (OFL 1.1)", 15, Color("#5b6272")))
@@ -189,6 +198,13 @@ func _on_hero_input(ev: InputEvent, hid: String) -> void:
 		_update_hero_panels()
 
 
+func _on_text_scale(v: float) -> void:
+	Art.text_scale = v
+	Settings.set_value("text_scale", v)
+	theme = Art.make_theme()
+	_show_menu()
+
+
 func _on_level(i: int) -> void:
 	ai_level = i
 	for k in _level_btns.size():
@@ -199,7 +215,7 @@ func _label(text: String, fsize: int, color: Color, use_bold: bool = false) -> L
 	var l := Label.new()
 	l.text = text
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l.add_theme_font_size_override("font_size", fsize)
+	l.add_theme_font_size_override("font_size", int(round(fsize * Art.ts())))
 	l.add_theme_color_override("font_color", color)
 	if use_bold:
 		l.add_theme_font_override("font", Art.bold())

@@ -31,7 +31,7 @@ const COL_BG := Color("#12141a")
 const COL_PANEL := Color("#1c1f27")
 const COL_PANEL_2 := Color("#262a35")
 const COL_TEXT := Color("#eef0f4")
-const COL_SUB := Color("#a3a9b6")
+const COL_SUB := Color("#b9bfcb")
 const COL_MANA := Color("#2563eb")
 const COL_GOLD := Color("#f5b301")
 const COL_ATK := Color("#eab308")
@@ -45,6 +45,14 @@ static var _icons := {}
 static var _tex := {}
 static var _font_r: Font = null
 static var _font_b: Font = null
+## 글자 크기 배율 (설정: 보통 1.0 / 크게 1.15 / 아주 크게 1.3)
+static var text_scale := -1.0
+
+
+static func ts() -> float:
+	if text_scale < 0.0:
+		text_scale = float(preload("res://ui/settings.gd").get_value("text_scale", 1.0))
+	return text_scale
 
 
 static func font() -> Font:
@@ -89,20 +97,23 @@ static func faction_color(f: String) -> Color:
 
 ## 사각형 안에 텍스트를 세로 가운데로 그린다.
 static func draw_text(ci: CanvasItem, text: String, rect: Rect2, size: int, color: Color,
-		align: HorizontalAlignment = HORIZONTAL_ALIGNMENT_CENTER, use_bold: bool = false) -> void:
+		align: HorizontalAlignment = HORIZONTAL_ALIGNMENT_CENTER, use_bold: bool = false, outline: int = 0) -> void:
 	var f := bold() if use_bold else font()
-	var s := size
-	while s > 8 and f.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, s).x > rect.size.x:
+	var s := int(round(size * ts()))
+	# 칸을 넘지 않을 때까지 줄인다 (높이와 너비 모두)
+	while s > 8 and (f.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, s).x > rect.size.x or f.get_height(s) > rect.size.y + 6):
 		s -= 1
 	var y := rect.position.y + (rect.size.y + f.get_ascent(s) - f.get_descent(s)) / 2.0
+	if outline > 0:
+		ci.draw_string_outline(f, Vector2(rect.position.x, y), text, align, rect.size.x, s, outline, Color(0, 0, 0, 0.85))
 	ci.draw_string(f, Vector2(rect.position.x, y), text, align, rect.size.x, s, color)
 
 
 static func draw_multiline(ci: CanvasItem, text: String, rect: Rect2, size: int, color: Color) -> void:
 	var f := font()
-	var s := size
+	var s := int(round(size * ts()))
 	# 칸에 들어갈 때까지 글자 크기를 줄인다
-	while s > 9:
+	while s > 10:
 		var h := f.get_multiline_string_size(text, HORIZONTAL_ALIGNMENT_CENTER, rect.size.x, s).y
 		if h <= rect.size.y:
 			break
@@ -117,7 +128,7 @@ static func draw_badge(ci: CanvasItem, center: Vector2, radius: float, fill: Col
 	ci.draw_circle(center, radius + 2.0, Color(0, 0, 0, 0.6))
 	ci.draw_circle(center, radius, fill)
 	draw_text(ci, text, Rect2(center - Vector2(radius, radius), Vector2(radius * 2, radius * 2)),
-		int(radius * 1.15), text_color, HORIZONTAL_ALIGNMENT_CENTER, true)
+		int(radius * 1.3), text_color, HORIZONTAL_ALIGNMENT_CENTER, true)
 
 
 static func panel_style(bg: Color, border: Color = Color(0, 0, 0, 0), border_w: int = 0, radius: int = 10) -> StyleBoxFlat:
@@ -132,7 +143,7 @@ static func panel_style(bg: Color, border: Color = Color(0, 0, 0, 0), border_w: 
 static func make_theme() -> Theme:
 	var t := Theme.new()
 	t.default_font = font()
-	t.default_font_size = 24
+	t.default_font_size = int(round(24 * ts()))
 	var normal := panel_style(Color("#2b3140"), Color("#46506a"), 2, 10)
 	normal.content_margin_left = 16
 	normal.content_margin_right = 16
