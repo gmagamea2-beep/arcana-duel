@@ -21,7 +21,8 @@ func _ready() -> void:
 	var app := _read_json(FileAccess.get_file_as_string("res://data/version.json"))
 	var app_build := int(app.get("build", 0))
 	# 빌드 점검용: 옛날 앱인 척해서 실제로 패치를 받아 적용해 본다
-	if OS.get_environment("ARCANA_UPDATE_TEST") == "1" and app_build > 0:
+	var test_mode := OS.get_environment("ARCANA_UPDATE_TEST") == "1" and app_build > 0
+	if test_mode:
 		app_build = 1
 	st["app_build"] = app_build
 	var current := app_build
@@ -37,7 +38,7 @@ func _ready() -> void:
 	st["current"] = current
 
 	# 2) 새 버전 확인 (에디터에서 실행했거나 직접 만든 빌드면 건너뜀)
-	if app_build <= 0 or OS.has_feature("editor"):
+	if app_build <= 0 or (OS.has_feature("editor") and not test_mode):
 		st["state"] = "dev"
 	else:
 		status.text = "업데이트 확인 중..."
