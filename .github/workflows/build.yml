@@ -67,6 +67,28 @@ jobs:
           grep "UI 점검 완료" ui.log
           ls -la shots
 
+      - name: Stamp build number (자동 업데이트용 버전)
+        run: |
+          python3 - <<'PY'
+          import json, os
+          p = "data/version.json"
+          v = json.load(open(p))
+          v["build"] = int(os.environ["GITHUB_RUN_NUMBER"])
+          v["engine"] = os.environ["GODOT_VERSION"]
+          json.dump(v, open(p, "w"))
+          print(v)
+          PY
+          sed -i "s/^version\/code=.*/version\/code=${GITHUB_RUN_NUMBER}/; s/^version\/name=.*/version\/name=\"0.1.${GITHUB_RUN_NUMBER}\"/" export_presets.cfg
+          sed -i "s/^application\/file_version=.*/application\/file_version=\"0.1.${GITHUB_RUN_NUMBER}.0\"/; s/^application\/product_version=.*/application\/product_version=\"0.1.${GITHUB_RUN_NUMBER}.0\"/" export_presets.cfg
+          grep -E "^version/|file_version|product_version" export_presets.cfg
+
+      - name: Boot / auto-update smoke test
+        run: |
+          # 옛날 앱인 척 실행 → 직전 릴리스의 패치를 실제로 받아 적용해 본다
+          ARCANA_UPDATE_TEST=1 timeout 120 ~/godot/godot --headless --path . --max-fps 60 --quit-after 1500 2>&1 | tee boot.log || true
+          grep "부트 상태" boot.log || true
+          if grep -E "SCRIPT ERROR|Parse Error" boot.log; then exit 1; fi
+
       - name: Export Windows (.exe)
         run: |
           mkdir -p build/windows
@@ -84,6 +106,13 @@ jobs:
           ~/godot/godot --headless --path . --export-debug "Android" build/android/ArcanaDuel.apk 2>&1 | grep -vE "ADDING:|Storing File|reimport|^\s*$" || true
           ls -la build/android
 
+      - name: Export patch packs (installed apps download these)
+        run: |
+          ~/godot/godot --headless --path . --export-pack "Windows Desktop" build/patch_windows.pck 2>&1 | grep -vE "Storing File|reimport|^\s*$" || true
+          ~/godot/godot --headless --path . --export-pack "Android" build/patch_android.pck 2>&1 | grep -vE "Storing File|reimport|^\s*$" || true
+          cp data/version.json build/version.json
+          ls -la build
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -100,12 +129,17 @@ jobs:
         with:
           tag_name: alpha-${{ github.run_number }}
           name: 알파 빌드 ${{ github.run_number }}
-          prerelease: true
+          prerelease: false
+          make_latest: "true"
           body: |
-            자동 빌드입니다.
+            자동 빌드입니다. (빌드 ${{ github.run_number }})
             - Windows: ArcanaDuel.exe 를 내려받아 실행 (경고가 뜨면 "추가 정보 → 실행")
             - Android: ArcanaDuel.apk 를 폰에서 내려받아 설치 ("출처를 알 수 없는 앱" 허용 필요)
+            - 이미 설치된 앱(빌드 8 이상)은 켤 때 자동으로 업데이트돼요. (patch_*.pck, version.json 은 자동 업데이트용 파일)
           files: |
             build/windows/ArcanaDuel.exe
             build/android/ArcanaDuel.apk
+            build/patch_windows.pck
+            build/patch_android.pck
+            build/version.json
             shots/*.png

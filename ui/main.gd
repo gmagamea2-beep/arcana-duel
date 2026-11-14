@@ -56,7 +56,9 @@ func _show_menu() -> void:
 
 	var title := _label("아르카나 듀얼", 88, Art.COL_TEXT, true)
 	v.add_child(title)
-	v.add_child(_label("%s · 1:1 덱빌딩 결투" % VERSION, 26, Art.COL_SUB))
+	var st: Dictionary = Engine.get_meta("update_status", {})
+	var build := int(st.get("current", 0))
+	v.add_child(_label("%s%s · 1:1 덱빌딩 결투" % [VERSION, (" · 빌드 %d" % build) if build > 0 else ""], 26, Art.COL_SUB))
 	v.add_child(_label("영웅을 고르세요", 30, Art.COL_TEXT, true))
 
 	var heroes := HBoxContainer.new()
@@ -146,7 +148,41 @@ func _show_menu() -> void:
 		opt.add_child(tb)
 	if not bool(Settings.get_value("tutorial_done", false)):
 		v.add_child(_label("처음이라면 [튜토리얼]부터 해 보세요! (5분)", 22, Art.COL_SEL, true))
+	_add_update_row(v, st)
 	v.add_child(_label("아이콘: game-icons.net (CC BY 3.0) · 글꼴: Pretendard (OFL 1.1)", 15, Color("#5b6272")))
+
+
+## 자동 업데이트 상태 표시 (boot.gd 가 넘겨준 정보)
+func _add_update_row(v: VBoxContainer, st: Dictionary) -> void:
+	var state: String = st.get("state", "")
+	var text := ""
+	var col := Art.COL_SUB
+	match state:
+		"latest":
+			text = "최신 버전이에요 (자동 업데이트 켜짐)"
+		"updated":
+			text = "새 업데이트를 받아 적용했어요! (빌드 %d)" % int(st.get("current", 0))
+			col = Art.COL_OK
+		"offline":
+			text = "인터넷에 연결되지 않아 업데이트를 확인하지 못했어요"
+		"failed":
+			text = "업데이트를 받지 못했어요. 다음에 켤 때 다시 시도해요"
+			col = Art.COL_TARGET
+	if state == "need_install":
+		var row := HBoxContainer.new()
+		row.alignment = BoxContainer.ALIGNMENT_CENTER
+		row.add_theme_constant_override("separation", 14)
+		row.add_child(_label("새 버전(빌드 %d)은 앱을 새로 설치해야 해요" % int(st.get("remote", 0)), 20, Art.COL_SEL, true))
+		var b := Button.new()
+		b.text = "새 버전 받기"
+		b.add_theme_font_size_override("font_size", 20)
+		Art.accent_button(b, Color("#ca8a04"))
+		var url: String = st.get("url", "")
+		b.pressed.connect(func(): OS.shell_open(url))
+		row.add_child(b)
+		v.add_child(row)
+	elif text != "":
+		v.add_child(_label(text, 18, col))
 
 
 func _hero_panel(hid: String) -> PanelContainer:

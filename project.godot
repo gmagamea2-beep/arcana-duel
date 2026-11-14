@@ -8,7 +8,7 @@ config_version=5
 config/name="Arcana Duel"
 config/description="1:1 덱빌딩 결투 카드게임 (알파)"
 config/version="0.1.0"
-run/main_scene="res://ui/main.tscn"
+run/main_scene="res://ui/boot.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://icon.svg"
 

@@ -21,6 +21,13 @@ GitHub의 **Releases**에서 최신 `알파 빌드`를 받으세요.
 - Windows: `ArcanaDuel.exe` 실행. "Windows의 PC 보호" 창이 뜨면 **추가 정보 → 실행**을 누르세요 (서명이 없어서 뜨는 경고입니다).
 - Android: 폰에서 `ArcanaDuel.apk`를 받아 설치하세요. **출처를 알 수 없는 앱** 설치를 허용해야 합니다.
 
+### 자동 업데이트
+빌드 8부터 들어간 기능입니다.
+- 게임을 켜면 GitHub의 최신 릴리스(`version.json`)를 확인합니다. 더 새 빌드가 있으면 패치 파일(`patch_windows.pck` / `patch_android.pck`, 약 3~4MB)을 받아 **바로 적용**합니다. 앱을 다시 설치할 필요가 없습니다.
+- 인터넷이 없으면 확인을 건너뛰고 그대로 실행합니다.
+- 엔진 버전이 바뀌거나 권한 같은 앱 자체 설정이 바뀌면 패치로는 안 됩니다. 이때는 메뉴에 **[새 버전 받기]** 버튼이 나옵니다. (`data/version.json`의 `min_app_build`를 올리면 이 상태가 됩니다.)
+- Android는 같은 서명 키(`tools/debug.keystore`)와 매번 커지는 버전 코드(빌드 번호)를 쓰기 때문에, 새 APK를 설치하면 기존 앱 위에 업데이트로 설치됩니다.
+
 ### Godot 에디터로
 1. [Godot 4.7](https://godotengine.org/download)을 설치합니다 (무료, 표준 버전).
 2. Godot에서 이 폴더의 `project.godot`을 엽니다.
