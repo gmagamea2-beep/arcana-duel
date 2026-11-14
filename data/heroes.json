@@ -8,7 +8,7 @@
   "powers": {
     "fire": {"name": "불꽃 튀기기", "cost": 2, "target": "enemy", "text": "적 하나에 1 피해", "effects": [{"do": "damage", "target": "chosen", "amount": 1}]},
     "steel": {"name": "강철 갑옷", "cost": 2, "text": "방어도 +2", "effects": [{"do": "armor", "amount": 2}]},
-    "shadow": {"name": "밤의 거래", "cost": 2, "text": "카드 1장 뽑기", "effects": [{"do": "draw", "amount": 1}]},
+    "shadow": {"name": "밤의 거래", "cost": 2, "text": "카드 1장 뽑기, 골드 +1", "effects": [{"do": "draw", "amount": 1}, {"do": "gold", "amount": 1}]},
     "forest": {"name": "새싹 심기", "cost": 2, "text": "묘목(1/1) 소환", "effects": [{"do": "summon", "token": "T_SAPLING", "count": 1}]},
     "emperor": {"name": "천공의 심판", "cost": 2, "target": "enemy", "text": "적 하나에 2 피해", "effects": [{"do": "damage", "target": "chosen", "amount": 2}]}
   }

@@ -58,6 +58,8 @@ var _pending_fx: Array = []
 var _pos_cache: Dictionary = {}
 var _hint_id := 0
 var _over_shown := false
+## 자동 점검용: 대기 시간을 거의 0으로
+var fast := false
 
 
 func _ready() -> void:
@@ -370,7 +372,7 @@ func _run_ai() -> void:
 func _wait(sec: float) -> void:
 	var t := Timer.new()
 	t.one_shot = true
-	t.wait_time = sec
+	t.wait_time = 0.02 if fast else sec
 	add_child(t)
 	t.start()
 	await t.timeout
@@ -972,7 +974,7 @@ func _show_mulligan() -> void:
 	var title := _label("시작 손패", 48, Art.COL_TEXT, true)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(title)
-	var who := "내가 선공입니다 (손패 4장)" if game.first == ME else "상대가 선공입니다 (나는 손패 5장 + 골드 1)"
+	var who := "내가 선공입니다 (손패 4장)" if game.first == ME else "상대가 선공입니다 (나는 손패 5장 + 골드 2)"
 	var sub := _label("바꾸고 싶은 카드를 누르세요 (한 번만 교체)\n" + who, 22, Art.COL_SUB)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(sub)
@@ -997,7 +999,7 @@ func _show_mulligan() -> void:
 	v.add_child(okc)
 
 
-func _on_mull_card(view: Control, i: int) -> void:
+func _on_mull_card(view, i: int) -> void:
 	if mull_marks.has(i):
 		mull_marks.erase(i)
 		view.set_highlight("")

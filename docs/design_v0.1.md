@@ -369,10 +369,14 @@ arcana-duel/
 정식판에서는 시뮬레이션 기반 AI(MCTS)와 난이도 단계를 검토.
 
 ### 13-5. 빌드와 배포
+**자동 빌드 (GitHub Actions, `.github/workflows/build.yml`)**: 코드를 올리면 GitHub 서버가 Godot 4.7.2를 받아서 ① AI끼리 300판 자동 대전으로 규칙 오류를 검사하고 ② `.exe`와 `.apk`를 만들어 ③ Releases에 "알파 빌드 N"으로 올립니다. 공개 저장소라 무료입니다.
+
+직접 만들 때:
+
 | 대상 | 방법 | 비용 |
 |---|---|---|
 | Windows `.exe` | Godot 에디터 → 내보내기 → Windows Desktop (내보내기 템플릿 설치) | 0원 |
-| Android `.apk` | JDK 17과 Android SDK를 설치하고 에디터 설정에 경로 등록 → 디버그 키스토어 → 내보내기 | 0원 |
+| Android `.apk` | JDK 17과 Android SDK를 설치하고 에디터 설정에 경로 등록 → 디버그 키스토어 (`tools/debug.keystore`) → 내보내기 | 0원 |
 | 배포 | APK 직접 설치 (출처를 알 수 없는 앱 허용) + itch.io 무료 업로드 | 0원 |
 | ~~구글 플레이~~ | 개발자 등록비 25달러로 예산 초과 → 보류 | — |
 | ~~EXE 코드 서명~~ | 인증서가 유료 → 생략. 실행 시 Windows 경고가 뜨면 "추가 정보 → 실행" | — |

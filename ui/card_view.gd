@@ -215,7 +215,7 @@ func _draw_board() -> void:
 	var k := w / 140.0
 	var rect := Rect2(Vector2.ZERO, size)
 	_draw_glow(rect, int(14 * k))
-	var taunt := inst != null and inst.has_kw("taunt")
+	var taunt: bool = inst != null and inst.has_kw("taunt")
 	if taunt:
 		_frame(rect, int(7 * k), int(14 * k), Color("#cbd5e1"))
 	else:

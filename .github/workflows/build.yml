@@ -43,13 +43,23 @@ jobs:
           mkdir -p ~/.local/share/godot/export_templates
           mv templates ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
 
-      - name: Import project
-        run: ~/godot/godot --headless --path . --import
+      - name: Import project (script check)
+        run: |
+          ~/godot/godot --headless --path . --import 2>&1 | tee import.log
+          if grep -E "SCRIPT ERROR|Parse Error" import.log; then exit 1; fi
 
       - name: Rules test (AI vs AI simulation)
         run: |
           ~/godot/godot --headless --path . -s res://tests/sim.gd -- 300 2>&1 | tee sim.log
-          if grep -E "SCRIPT ERROR|Parse Error|행동 실패" sim.log; then exit 1; fi
+          if grep -E "SCRIPT ERROR|Parse Error|행동 실패:" sim.log; then exit 1; fi
+
+      - name: UI test (play one game through the UI, screenshots)
+        run: |
+          mkdir -p shots
+          SHOT_DIR=$PWD/shots xvfb-run -a -s "-screen 0 1920x1080x24" ~/godot/godot --path . --rendering-driver opengl3 --resolution 1920x1080 -s res://tests/ui_smoke.gd 2>&1 | tee ui.log
+          if grep -E "SCRIPT ERROR|Parse Error|UI 행동 실패" ui.log; then exit 1; fi
+          grep "UI 점검 완료" ui.log
+          ls -la shots
 
       - name: Export Windows (.exe)
         run: |
@@ -76,6 +86,8 @@ jobs:
             build/windows/ArcanaDuel.exe
             build/android/ArcanaDuel.apk
             sim.log
+            ui.log
+            shots/*.png
 
       - name: Publish alpha release
         uses: softprops/action-gh-release@v2
@@ -90,3 +102,4 @@ jobs:
           files: |
             build/windows/ArcanaDuel.exe
             build/android/ArcanaDuel.apk
+            shots/*.png

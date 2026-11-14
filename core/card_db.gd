@@ -33,7 +33,7 @@ const TEXT_KEYWORD_DESC := {
 	"함정": "뒷면으로 놓았다가 상대 턴에 조건이 맞으면 자동으로 발동합니다.",
 }
 
-const _INT_KEYS := ["cost", "attack", "health", "count", "trap_slots_bonus", "amount", "atk", "hp", "armor"]
+const _INT_KEYS := ["cost", "attack", "health", "count", "trap_slots_bonus", "min_cost", "amount", "atk", "hp", "armor"]
 
 static var cards := {}
 static var starter: Array = []

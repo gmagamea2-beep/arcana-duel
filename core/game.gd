@@ -25,7 +25,7 @@ const REFRESH_COST := 1
 const CLEAN_COST := 2
 const FIRST_HAND := 4
 const SECOND_HAND := 5
-const SECOND_GOLD := 1
+const SECOND_GOLD := 2
 
 var players: Array = []
 var current := 0
@@ -381,7 +381,7 @@ func play_card(pi: int, hi: int, target: Dictionary = {}) -> bool:
 		"spell":
 			_log("%s: %s 사용" % [p.name, c.display_name()])
 			game_event.emit("play", {"card": c, "player": pi})
-			var tctx := {"countered": false}
+			var tctx := {"countered": false, "cost": c.cost()}
 			_fire_traps(1 - pi, "enemy_spell", tctx)
 			if tctx["countered"]:
 				_log("  → %s 무효화됨!" % c.display_name())
@@ -666,6 +666,8 @@ func _fire_traps(owner_pi: int, trigger: String, ctx: Dictionary) -> void:
 	var o: PlayerState = players[owner_pi]
 	for t in o.traps.duplicate():
 		if t.data.get("trigger", "") != trigger:
+			continue
+		if int(t.data.get("min_cost", 0)) > int(ctx.get("cost", 99)):
 			continue
 		if ctx.get("cancel", false) or ctx.get("countered", false):
 			break
