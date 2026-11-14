@@ -276,7 +276,7 @@ func _build() -> void:
 	csb.content_margin_top = 12
 	csb.content_margin_bottom = 12
 	coach.add_theme_stylebox_override("panel", csb)
-	coach.custom_minimum_size = Vector2(760, 0)
+	coach.custom_minimum_size = Vector2(600, 0)
 	coach.visible = false
 	fx_layer.add_child(coach)
 	var cv := VBoxContainer.new()
@@ -294,7 +294,7 @@ func _build() -> void:
 	ch.add_child(coach_skip)
 	coach_text = _label("", 23, Art.COL_TEXT)
 	coach_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	coach_text.custom_minimum_size = Vector2(720, 0)
+	coach_text.custom_minimum_size = Vector2(564, 0)
 	cv.add_child(coach_text)
 	var cb := HBoxContainer.new()
 	cb.alignment = BoxContainer.ALIGNMENT_END
@@ -1242,20 +1242,24 @@ func _place_coach() -> void:
 	coach.reset_size()
 	var area := left_area.get_global_rect()
 	var avoid := _focus_rect(_focus_key())
-	var x := area.position.x + (area.size.x - coach.size.x) / 2.0
-	var ys := [
-		area.position.y + area.size.y * 0.36 - coach.size.y / 2.0,
-		area.position.y + 112.0,
-		area.position.y + area.size.y - coach.size.y - 8.0,
+	# 후보 위치: 가운데 줄(가운데/왼쪽/오른쪽) → 위 → 아래. 눌러야 할 곳을 가리지 않는 첫 자리.
+	var mid_y := area.position.y + area.size.y * 0.36 - coach.size.y / 2.0
+	var cx := area.position.x + (area.size.x - coach.size.x) / 2.0
+	var cands := [
+		Vector2(cx, mid_y),
+		Vector2(area.position.x + 4.0, mid_y),
+		Vector2(area.end.x - coach.size.x - 4.0, mid_y),
+		Vector2(cx, area.position.y + 112.0),
+		Vector2(cx, area.end.y - coach.size.y - 8.0),
 	]
-	var y: float = ys[0]
+	var pos: Vector2 = cands[0]
 	if avoid.size != Vector2.ZERO:
-		for cand in ys:
-			var cy: float = cand
-			if not Rect2(Vector2(x, cy), coach.size).intersects(avoid.grow(16)):
-				y = cy
+		for cand in cands:
+			var p: Vector2 = cand
+			if not Rect2(p, coach.size).intersects(avoid.grow(8)):
+				pos = p
 				break
-	coach.position = Vector2(x, y) - fx_layer.global_position
+	coach.position = pos - fx_layer.global_position
 
 
 func _on_coach_next() -> void:
