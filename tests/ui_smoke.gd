@@ -49,6 +49,14 @@ func _run() -> void:
 	var shots := {3: "3_turn3", 6: "4_turn6", 9: "5_turn9"}
 	while game.phase == "play" and my_turns < 40 and _frames_total < 30000:
 		if game.current == 0 and not battle.busy and not battle.overlay.visible:
+			var t: int = game.players[0].turn_count
+			if shots.has(t):
+				if game.players[0].hand.size() > 0:
+					battle.sel = {"kind": "hand", "index": 0}
+				battle._refresh()
+				await _frames(40)
+				await _shot(shots[t])
+				battle.sel = {}
 			var steps := 0
 			while game.phase == "play" and game.current == 0 and steps < 120:
 				var a: Dictionary = helper.choose_action(game, 0)
@@ -67,13 +75,6 @@ func _run() -> void:
 				await _frames(1)
 			if game.phase != "play":
 				break
-			var t: int = game.players[0].turn_count
-			if shots.has(t):
-				if game.players[0].hand.size() > 0:
-					battle.sel = {"kind": "hand", "index": 0}
-				battle._refresh()
-				await _shot(shots[t])
-				battle.sel = {}
 			battle._on_end_pressed()
 			my_turns += 1
 		await _frames(2)

@@ -55,7 +55,7 @@ jobs:
 
       - name: UI test (play one game through the UI, screenshots)
         run: |
-          mkdir -p shots
+          mkdir -p shots && touch shots/.gdignore
           SHOT_DIR=$PWD/shots xvfb-run -a -s "-screen 0 1920x1080x24" ~/godot/godot --path . --rendering-driver opengl3 --resolution 1920x1080 -s res://tests/ui_smoke.gd 2>&1 | tee ui.log
           if grep -E "SCRIPT ERROR|Parse Error|UI 행동 실패" ui.log; then exit 1; fi
           grep "UI 점검 완료" ui.log
@@ -64,7 +64,7 @@ jobs:
       - name: Export Windows (.exe)
         run: |
           mkdir -p build/windows
-          ~/godot/godot --headless --path . --export-release "Windows Desktop" build/windows/ArcanaDuel.exe
+          ~/godot/godot --headless --path . --export-release "Windows Desktop" build/windows/ArcanaDuel.exe 2>&1 | grep -vE "Storing File|reimport|^\s*$" || true
           ls -la build/windows
 
       - name: Export Android (.apk)
@@ -75,7 +75,7 @@ jobs:
         run: |
           export JAVA_HOME="$JAVA_HOME_17_X64"
           mkdir -p build/android
-          ~/godot/godot --headless --path . --export-debug "Android" build/android/ArcanaDuel.apk
+          ~/godot/godot --headless --path . --export-debug "Android" build/android/ArcanaDuel.apk 2>&1 | grep -vE "ADDING:|Storing File|reimport|^\s*$" || true
           ls -la build/android
 
       - name: Upload artifacts

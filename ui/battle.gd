@@ -58,6 +58,8 @@ var _pending_fx: Array = []
 var _pos_cache: Dictionary = {}
 var _hint_id := 0
 var _over_shown := false
+var _banner_label: Label = null
+var _reveal_view: Control = null
 ## 자동 점검용: 대기 시간을 거의 0으로
 var fast := false
 
@@ -906,7 +908,10 @@ func _float_text(pos: Vector2, text: String, col: Color) -> void:
 
 
 func _banner(text: String, col: Color) -> void:
+	if is_instance_valid(_banner_label):
+		_banner_label.queue_free()
 	var l := _label(text, 64, col, true)
+	_banner_label = l
 	l.add_theme_color_override("font_outline_color", Color.BLACK)
 	l.add_theme_constant_override("outline_size", 14)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -923,7 +928,10 @@ func _banner(text: String, col: Color) -> void:
 
 
 func _reveal(c: CardInst) -> void:
+	if is_instance_valid(_reveal_view):
+		_reveal_view.queue_free()
 	var v: CardView = CardView.new().setup(c.data, null, "detail")
+	_reveal_view = v
 	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	fx_layer.add_child(v)
 	var area := left_area.get_global_rect()

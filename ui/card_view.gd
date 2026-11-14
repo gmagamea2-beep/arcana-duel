@@ -183,7 +183,8 @@ func _draw_portrait() -> void:
 	draw_style_box(Art.panel_style(Color(0, 0, 0, 0.35), Color(0, 0, 0, 0), 0, int(8 * k)), art_rect)
 	_draw_icon(art_rect.grow(-6 * k))
 	# 이름
-	Art.draw_text(self, data.get("name", ""), Rect2(46 * k, 6 * k, w - 52 * k, 36 * k), int(20 * k), Art.COL_TEXT, HORIZONTAL_ALIGNMENT_CENTER, true)
+	var name_w := w - 52 * k - (36 * k if price >= 0 else 0.0)
+	Art.draw_text(self, data.get("name", ""), Rect2(46 * k, 6 * k, name_w, 36 * k), int(20 * k), Art.COL_TEXT, HORIZONTAL_ALIGNMENT_CENTER, true)
 	# 비용
 	Art.draw_badge(self, Vector2(24 * k, 24 * k), 19 * k, Art.COL_MANA, str(int(data.get("cost", 0))))
 	# 종류 줄
@@ -280,16 +281,19 @@ func _draw_market() -> void:
 	Art.draw_badge(self, Vector2(18, 18), 14, Art.COL_MANA, str(int(data.get("cost", 0))))
 	var x := h + 2.0
 	var text_w := w - x - 64
-	Art.draw_text(self, data.get("name", ""), Rect2(x, 4, text_w, 28), 21, Art.COL_TEXT, HORIZONTAL_ALIGNMENT_LEFT, true)
+	Art.draw_text(self, data.get("name", ""), Rect2(x, 2, text_w, 26), 20, Art.COL_TEXT, HORIZONTAL_ALIGNMENT_LEFT, true)
 	var stats := ""
 	if data.get("type", "") == "unit":
 		stats = "  %d/%d" % [int(data.get("attack", 0)), int(data.get("health", 0))]
-	Art.draw_text(self, type_line() + stats, Rect2(x, 30, text_w, 20), 14, _border_color().lightened(0.2), HORIZONTAL_ALIGNMENT_LEFT)
+	Art.draw_text(self, type_line() + stats, Rect2(x, 27, text_w, 18), 13, _border_color().lightened(0.2), HORIZONTAL_ALIGNMENT_LEFT)
 	var rt := rules_text().replace("\n", " · ")
 	if rt != "":
 		var f := Art.font()
-		var y := 54.0 + f.get_ascent(15)
-		draw_multiline_string(f, Vector2(x, y), rt, HORIZONTAL_ALIGNMENT_LEFT, text_w, 15, 2, Art.COL_SUB)
+		var fs := 14
+		if f.get_multiline_string_size(rt, HORIZONTAL_ALIGNMENT_LEFT, text_w, fs).y > 36.0:
+			fs = 12
+		var y := 47.0 + f.get_ascent(fs)
+		draw_multiline_string(f, Vector2(x, y), rt, HORIZONTAL_ALIGNMENT_LEFT, text_w, fs, 2, Art.COL_SUB)
 	if price >= 0:
 		Art.draw_badge(self, Vector2(w - 34, h / 2.0), 24, Art.COL_GOLD, str(price), Color.BLACK)
 	if dim:
