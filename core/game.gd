@@ -887,3 +887,23 @@ func _log(text: String) -> void:
 	if log_lines.size() > 300:
 		log_lines.pop_front()
 	logged.emit(text)
+
+
+## 온라인 대전용: 두 기기의 게임 상태가 같은지 비교하는 지문
+func state_hash() -> int:
+	var parts: Array = [phase, current, winner, total_turns, market, field.id if field != null else "", field_owner]
+	for p in players:
+		parts.append([p.hp, p.armor, p.mana, p.max_mana, p.gold, p.turn_count, p.deck.size(), p.discard.size(), p.exiled.size()])
+		var hand_ids: Array = []
+		for c in p.hand:
+			hand_ids.append(c.id)
+		parts.append(hand_ids)
+		var units: Array = []
+		for u in p.board:
+			units.append([u.id, u.attack, u.health, u.keywords])
+		parts.append(units)
+		var trap_ids: Array = []
+		for t in p.traps:
+			trap_ids.append(t.id)
+		parts.append(trap_ids)
+	return str(parts).hash()

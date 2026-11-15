@@ -5,12 +5,18 @@ const Art = preload("res://ui/art.gd")
 const CardDB = preload("res://core/card_db.gd")
 const Battle = preload("res://ui/battle.gd")
 const Settings = preload("res://ui/settings.gd")
+const NetMatch = preload("res://net/net_match.gd")
 
 const VERSION := "알파 v0.1"
 
 var selected_hero := "fire"
 var ai_level := 1
 var screen: Control = null
+## 온라인 대전 연결 (로비 → 대전까지 유지)
+var net: NetMatch = null
+var _lobby_status: Label = null
+var _lobby_code: Label = null
+var _lobby_code_box: VBoxContainer = null
 var _hero_panels := {}
 var _level_btns: Array = []
 
@@ -24,7 +30,8 @@ func _ready() -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_GO_BACK_REQUEST:
-		if screen is Battle:
+		if screen is Battle or net != null:
+			_leave_online()
 			_show_menu()
 		else:
 			get_tree().quit()
@@ -106,6 +113,13 @@ func _show_menu() -> void:
 	Art.accent_button(start, Color("#16a34a"))
 	start.pressed.connect(_start_battle)
 	row.add_child(start)
+	var online := Button.new()
+	online.text = "온라인 대전"
+	online.custom_minimum_size = Vector2(260, 76)
+	online.add_theme_font_size_override("font_size", 28)
+	Art.accent_button(online, Color("#2563eb"))
+	online.pressed.connect(_show_online_lobby)
+	row.add_child(online)
 	var rules := Button.new()
 	rules.text = "게임 방법"
 	rules.custom_minimum_size = Vector2(220, 76)
@@ -338,3 +352,149 @@ const RULES_TEXT := """[b]목표[/b]
 
 [b]붕괴[/b]
 · 내 13번째 턴부터 매 턴 영웅이 1, 2, 3… 피해를 받습니다."""
+
+
+# ─────────────────────────────── 온라인 대전 로비 ───────────────────────────────
+
+func _game_build() -> int:
+	var st: Dictionary = Engine.get_meta("update_status", {})
+	var b := int(st.get("current", 0))
+	if b > 0:
+		return b
+	var v: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/version.json"))
+	return int(v.get("build", 0)) if v is Dictionary else 0
+
+
+func _leave_online() -> void:
+	if net != null:
+		net.leave()
+		net.queue_free()
+		net = null
+
+
+func _new_net() -> void:
+	_leave_online()
+	net = NetMatch.new()
+	net.game_build = _game_build()
+	add_child(net)
+	net.status_changed.connect(_on_net_status)
+	net.matched.connect(_start_online_battle, CONNECT_DEFERRED)
+
+
+func _on_net_status(t: String) -> void:
+	if _lobby_status != null and is_instance_valid(_lobby_status):
+		_lobby_status.text = t
+	if _lobby_code != null and is_instance_valid(_lobby_code) and net != null and net.is_host and net.room != "":
+		_lobby_code.text = net.room
+
+
+func _copy_code() -> void:
+	if net != null:
+		DisplayServer.clipboard_set(net.room)
+
+
+func _show_online_lobby() -> void:
+	_leave_online()
+	var root := Control.new()
+	_set_screen(root)
+	var bg := ColorRect.new()
+	bg.color = Art.COL_BG
+	root.add_child(bg)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var center := CenterContainer.new()
+	root.add_child(center)
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 22)
+	center.add_child(v)
+	v.add_child(_label("온라인 대전 (1:1)", 64, Art.COL_TEXT, true))
+	var hd: Dictionary = CardDB.heroes[selected_hero]
+	v.add_child(_label("내 영웅: %s · %s  (메인 메뉴에서 바꿀 수 있어요)" % [hd["name"], hd["title"]], 24, Art.FACTION_ACCENT[hd["faction"]]))
+	v.add_child(_label("무료 공개 서버로 연결해요. 가끔 느리거나 끊길 수 있어요.\n두 사람 모두 같은 빌드(최신 버전)여야 해요. 한 턴 제한 시간은 90초예요.", 20, Art.COL_SUB))
+
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 30)
+	v.add_child(row)
+	var host_btn := Button.new()
+	host_btn.text = "방 만들기"
+	host_btn.custom_minimum_size = Vector2(260, 76)
+	host_btn.add_theme_font_size_override("font_size", 28)
+	Art.accent_button(host_btn, Color("#16a34a"))
+	host_btn.pressed.connect(_on_host_pressed)
+	row.add_child(host_btn)
+	var join_box := HBoxContainer.new()
+	join_box.add_theme_constant_override("separation", 10)
+	row.add_child(join_box)
+	var code_edit := LineEdit.new()
+	code_edit.placeholder_text = "방 코드 5글자"
+	code_edit.max_length = 5
+	code_edit.custom_minimum_size = Vector2(240, 76)
+	code_edit.add_theme_font_size_override("font_size", 30)
+	code_edit.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	join_box.add_child(code_edit)
+	var join_btn := Button.new()
+	join_btn.text = "참가"
+	join_btn.custom_minimum_size = Vector2(150, 76)
+	join_btn.add_theme_font_size_override("font_size", 28)
+	Art.accent_button(join_btn, Color("#2563eb"))
+	join_btn.pressed.connect(func(): _on_join_pressed(code_edit.text))
+	code_edit.text_submitted.connect(func(t: String): _on_join_pressed(t))
+	join_box.add_child(join_btn)
+
+	_lobby_code_box = VBoxContainer.new()
+	_lobby_code_box.visible = false
+	v.add_child(_lobby_code_box)
+	_lobby_code_box.add_child(_label("방 코드", 22, Art.COL_SUB))
+	_lobby_code = _label("·····", 96, Art.COL_SEL, true)
+	_lobby_code_box.add_child(_lobby_code)
+	var copy := Button.new()
+	copy.text = "코드 복사"
+	copy.add_theme_font_size_override("font_size", 20)
+	copy.pressed.connect(_copy_code)
+	var cc := CenterContainer.new()
+	cc.add_child(copy)
+	_lobby_code_box.add_child(cc)
+	_lobby_code_box.add_child(_label("상대에게 이 코드를 알려 주세요. 상대가 들어오면 바로 시작해요.", 22, Art.COL_TEXT))
+
+	_lobby_status = _label("", 24, Art.COL_SUB)
+	v.add_child(_lobby_status)
+	var back := Button.new()
+	back.text = "뒤로"
+	back.custom_minimum_size = Vector2(200, 60)
+	back.add_theme_font_size_override("font_size", 24)
+	back.pressed.connect(func():
+		_leave_online()
+		_show_menu())
+	var bc := CenterContainer.new()
+	bc.add_child(back)
+	v.add_child(bc)
+
+
+func _on_host_pressed() -> void:
+	_new_net()
+	_lobby_code_box.visible = true
+	_lobby_code.text = "·····"
+	net.host_room(selected_hero)
+
+
+func _on_join_pressed(code: String) -> void:
+	_new_net()
+	_lobby_code_box.visible = false
+	if not net.join_room(code, selected_hero):
+		_lobby_status.text = "방 코드가 올바르지 않아요 (5글자)"
+
+
+func _start_online_battle() -> void:
+	if net == null or not net.is_matched:
+		return
+	_lobby_status = null
+	_lobby_code = null
+	_lobby_code_box = null
+	var b := Battle.new()
+	b.net = net
+	b.exit_to_menu.connect(func():
+		_leave_online()
+		_show_menu())
+	b.restart_requested.connect(_show_online_lobby)
+	_set_screen(b)

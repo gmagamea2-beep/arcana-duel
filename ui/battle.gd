@@ -19,8 +19,10 @@ const FocusFrame = preload("res://ui/focus_frame.gd")
 const PileView = preload("res://ui/pile_view.gd")
 const DragArrow = preload("res://ui/drag_arrow.gd")
 
-const ME := 0
-const OP := 1
+## 나 / 상대의 플레이어 번호 (온라인에서 내가 손님이면 1 / 0)
+var ME := 0
+var OP := 1
+const TURN_TIME := 90
 const RIGHT_W := 480
 const AI_DELAY := 0.7
 
@@ -29,6 +31,12 @@ var op_hero := "steel"
 var ai_level := 1
 ## 메뉴에서 "튜토리얼"로 시작했는지
 var tutorial_mode := false
+## 온라인 대전 연결 (NetMatch). null 이면 AI 대전
+var net = null
+var _mull_local = null
+var _mull_remote = null
+var _turn_deadline := 0
+var link_label: Label
 var tutorial: Tutorial = null
 
 var game: Game
@@ -95,6 +103,13 @@ var _tips_queued: Dictionary = {}
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	if net != null:
+		ME = net.my_index
+		OP = 1 - ME
+		net.mulligan_received.connect(_on_net_mulligan)
+		net.action_received.connect(_on_net_action)
+		net.opponent_left.connect(_on_net_left)
+		net.link_changed.connect(_on_net_link)
 	_build()
 	_start_game()
 
@@ -102,6 +117,22 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if focus_frame != null:
 		focus_frame.set_target(_focus_rect(_focus_key()))
+	if net != null and game != null and game.phase == "play" and game.current == ME and _turn_deadline > 0:
+		var left := int(ceil((_turn_deadline - Time.get_ticks_msec()) / 1000.0))
+		var want := "내 턴 (%d) · %d초" % [game.players[ME].turn_count, maxi(0, left)]
+		if turn_label.text != want:
+			turn_label.text = want
+			turn_label.add_theme_color_override("font_color", Art.COL_TARGET if left <= 15 else Art.COL_OK)
+		if left <= 0 and not busy and not overlay.visible:
+			_turn_deadline = 0
+			if not _drag.is_empty():
+				var v = _drag.get("view", null)
+				_drag = {}
+				_end_drag_visuals(v)
+			targeting = {}
+			sel = {}
+			_show_hint("시간이 다 돼서 턴이 자동으로 끝났어요")
+			_on_end_pressed()
 
 
 # ─────────────────────────────── 화면 구성 ───────────────────────────────
@@ -306,6 +337,12 @@ func _build() -> void:
 
 	focus_frame = FocusFrame.new()
 	fx_layer.add_child(focus_frame)
+	link_label = _label("", 24, Color("#fca5a5"), true)
+	link_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	link_label.add_theme_constant_override("outline_size", 8)
+	link_label.position = Vector2(20, 1040)
+	link_label.visible = false
+	fx_layer.add_child(link_label)
 
 	coach = PanelContainer.new()
 	var csb := Art.panel_style(Color(0.06, 0.07, 0.1, 0.94), Color("#facc15"), 3, 14)
@@ -397,7 +434,14 @@ func _clear(node: Node) -> void:
 
 func _start_game() -> void:
 	game = Game.new()
-	game.start(my_hero, op_hero, -1, ["나", "상대"])
+	if net != null:
+		var names := ["상대", "상대"]
+		names[ME] = "나"
+		my_hero = net.heroes[ME]
+		op_hero = net.heroes[OP]
+		game.start(net.heroes[0], net.heroes[1], net.seed_value, names)
+	else:
+		game.start(my_hero, op_hero, -1, ["나", "상대"])
 	game.logged.connect(_on_log)
 	game.game_event.connect(_on_game_event)
 	ai = AI.new()
@@ -406,7 +450,7 @@ func _start_game() -> void:
 		tutorial = Tutorial.new()
 		ai.level = 0
 		tutorial.setup(game)
-	else:
+	elif net == null:
 		game.mulligan(OP, [])
 	log_label.clear()
 	for l in game.log_lines:
@@ -436,6 +480,8 @@ func _do(a: Dictionary) -> bool:
 	var ok := game.apply_action(ME, a)
 	if not ok:
 		_show_hint("지금은 할 수 없는 행동입니다")
+	elif net != null:
+		net.send_action(a, game.state_hash())
 	if tutorial != null:
 		var was_active := tutorial.active
 		tutorial.after_action(a, ok)
@@ -539,9 +585,11 @@ func _refresh() -> void:
 		turn_label.text = "준비 중"
 	elif game.current == ME:
 		turn_label.text = "내 턴 (%d)" % me.turn_count
+		if net != null and _turn_deadline > 0:
+			turn_label.text += " · %d초" % maxi(0, int(ceil((_turn_deadline - Time.get_ticks_msec()) / 1000.0)))
 		turn_label.add_theme_color_override("font_color", Art.COL_OK)
 	else:
-		turn_label.text = "상대 턴"
+		turn_label.text = "상대 턴" + (" (생각 중...)" if net != null else "")
 		turn_label.add_theme_color_override("font_color", Art.COL_TARGET)
 
 
@@ -981,7 +1029,10 @@ func _on_end_pressed() -> void:
 	sel = {}
 	targeting = {}
 	if _do({"type": "end"}) and game.phase == "play" and game.current == OP:
-		_run_ai()
+		if net != null:
+			_begin_remote_turn()
+		else:
+			_run_ai()
 
 
 # ─────────────────────────────── 기록 / 연출 ───────────────────────────────
@@ -1019,8 +1070,8 @@ func _snapshot_positions() -> void:
 	for i in market_box.get_child_count():
 		var mv = market_box.get_child(i)
 		_pos_cache["m%d" % i] = mv.global_position + mv.size / 2.0
-	_pos_cache["h0"] = me_hero_view.global_position + me_hero_view.size / 2.0
-	_pos_cache["h1"] = op_hero_view.global_position + op_hero_view.size / 2.0
+	_pos_cache["h%d" % ME] = me_hero_view.global_position + me_hero_view.size / 2.0
+	_pos_cache["h%d" % OP] = op_hero_view.global_position + op_hero_view.size / 2.0
 
 
 func _on_game_event(kind: String, info: Dictionary) -> void:
@@ -1090,13 +1141,13 @@ func _flush_fx() -> void:
 						_float_text(pos + Vector2(-70, 0), "방어도 -%d" % armor, Color("#cbd5e1"))
 						if amount > armor:
 							_float_text(pos + Vector2(60, 0), "-%d" % (amount - armor), Color("#ff4d4d"))
-						if fx["key"] == "h1":
+						if fx["key"] == "h%d" % OP:
 							_queue_tip("armor", "상대 영웅의 '방어도'(체력 옆 회색 방패 숫자)가 피해를 먼저 막았어요.\n방어도가 0이 되어야 체력이 줄어들어요. 강철 영웅 로완은 영웅 능력으로 방어도를 쌓아요.")
 					else:
 						_float_text(pos, "-%d" % amount, Color("#ff4d4d"))
-					if fx["key"] == "h0" and amount > armor:
+					if fx["key"] == "h%d" % ME and amount > armor:
 						me_hero_view.flash()
-					elif fx["key"] == "h1" and amount > armor:
+					elif fx["key"] == "h%d" % OP and amount > armor:
 						op_hero_view.flash()
 			"heal":
 				if _pos_cache.has(fx["key"]):
@@ -1234,6 +1285,14 @@ func _on_mull_card(view, i: int) -> void:
 
 
 func _on_mull_confirm() -> void:
+	if net != null:
+		_mull_local = mull_marks.keys()
+		net.send_mulligan(_mull_local)
+		overlay.visible = false
+		_clear(overlay)
+		_show_hint("상대가 시작 손패를 고르는 중...")
+		_try_apply_mulligans()
+		return
 	game.mulligan(ME, mull_marks.keys())
 	overlay.visible = false
 	_clear(overlay)
@@ -1274,7 +1333,8 @@ func _show_game_over() -> void:
 	again.add_theme_font_size_override("font_size", 26)
 	Art.accent_button(again, Color("#16a34a"))
 	again.pressed.connect(func(): restart_requested.emit())
-	row.add_child(again)
+	if net == null:
+		row.add_child(again)
 	var menu := Button.new()
 	menu.text = "메인 메뉴"
 	menu.custom_minimum_size = Vector2(240, 64)
@@ -1737,3 +1797,120 @@ func _view_for_target(t: Dictionary) -> Control:
 		if v is CardView and v.has_meta("slot") and int(v.get_meta("slot")) == int(t["slot"]):
 			return v
 	return null
+
+
+# ─────────────────────────────── 온라인 대전 ───────────────────────────────
+
+func _ints(a: Array) -> Array:
+	var out: Array = []
+	for x in a:
+		out.append(int(x))
+	return out
+
+
+func _on_net_mulligan(idx: Array) -> void:
+	_mull_remote = _ints(idx)
+	_try_apply_mulligans()
+
+
+## 두 사람 시작 손패 교체를 같은 순서(방장 → 손님)로 적용해야 두 기기의 게임이 똑같이 흘러간다
+func _try_apply_mulligans() -> void:
+	if _mull_local == null or _mull_remote == null or game.phase != "mulligan":
+		return
+	for pi in [0, 1]:
+		var idx: Array = _mull_local if pi == ME else _mull_remote
+		game.mulligan(pi, _ints(idx))
+	_refresh()
+	_flush_fx()
+	if game.phase == "play" and game.current == ME:
+		_banner("내 턴", Art.COL_OK)
+		_start_turn_timer()
+		_on_my_turn_start()
+	else:
+		_begin_remote_turn()
+
+
+func _start_turn_timer() -> void:
+	if net != null:
+		_turn_deadline = Time.get_ticks_msec() + TURN_TIME * 1000
+
+
+func _begin_remote_turn() -> void:
+	busy = true
+	_turn_deadline = 0
+	_refresh()
+	_banner("상대 턴", Art.COL_TARGET)
+	_update_coach()
+
+
+func _on_net_action(a: Dictionary, state_hash: int) -> void:
+	if game == null or game.phase != "play" or _over_shown:
+		return
+	if game.current != OP:
+		_desync("상대 차례가 아닌데 행동이 왔어요")
+		return
+	_snapshot_positions()
+	var ok := game.apply_action(OP, a)
+	if not ok or (state_hash != 0 and game.state_hash() != state_hash):
+		_desync("상대의 행동을 적용한 결과가 달라요")
+		return
+	_refresh()
+	_flush_fx()
+	if game.phase == "over":
+		busy = false
+		_check_over()
+	elif game.current == ME:
+		busy = false
+		_refresh()
+		_banner("내 턴", Art.COL_OK)
+		_start_turn_timer()
+		_on_my_turn_start()
+		_update_coach()
+
+
+func _on_net_left(reason: String) -> void:
+	if _over_shown:
+		return
+	_over_shown = true
+	busy = true
+	var v := _modal()
+	var text := "상대가 게임을 나갔어요" if reason == "left" else "상대와 연결이 끊겼어요"
+	var title := _label(text, 56, Art.COL_SEL, true)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(title)
+	var sub := _label("이번 판은 내 승리로 처리돼요", 26, Art.COL_SUB)
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(sub)
+	_menu_button(v)
+
+
+func _on_net_link(ok: bool) -> void:
+	link_label.text = "" if ok else "연결이 불안정해요... 다시 연결하는 중"
+	link_label.visible = not ok
+
+
+func _desync(why: String) -> void:
+	if _over_shown:
+		return
+	_over_shown = true
+	busy = true
+	print("DESYNC: ", why)
+	var v := _modal()
+	var title := _label("동기화 오류", 56, Art.COL_TARGET, true)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(title)
+	var sub := _label("두 기기의 게임 화면이 서로 달라졌어요. 이번 판은 여기서 끝낼게요.\n(" + why + ")", 24, Art.COL_SUB)
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	v.add_child(sub)
+	_menu_button(v)
+
+
+func _menu_button(v: VBoxContainer) -> void:
+	var menu := Button.new()
+	menu.text = "메인 메뉴"
+	menu.custom_minimum_size = Vector2(260, 64)
+	menu.add_theme_font_size_override("font_size", 26)
+	menu.pressed.connect(func(): exit_to_menu.emit())
+	var c := CenterContainer.new()
+	c.add_child(menu)
+	v.add_child(c)
