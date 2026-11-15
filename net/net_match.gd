@@ -45,7 +45,8 @@ var _broker_try := 0
 var _link_ok := true
 
 
-func _ready() -> void:
+func _init() -> void:
+	# 트리에 들어가기 전에도 바로 쓸 수 있게 생성자에서 만든다
 	mqtt = MQTT.new()
 	add_child(mqtt)
 	mqtt.connected.connect(_on_connected)

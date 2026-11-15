@@ -48,6 +48,8 @@ func _run() -> void:
 	host.mulligan_received.connect(func(idx): mull_in[0] = idx)
 	guest.mulligan_received.connect(func(idx): mull_in[1] = idx)
 
+	await process_frame
+	await process_frame
 	host.host_room("fire")
 	if not await _wait_until(func(): return host.mqtt.is_ready(), 40.0):
 		_done(false, "방장이 서버에 연결하지 못함")
