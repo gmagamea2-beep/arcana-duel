@@ -184,6 +184,11 @@ func _on_message(_topic_name: String, payload: String) -> void:
 	if t == "bye":
 		opponent_left.emit("left")
 		return
+	if t == "reject":
+		if not is_host and not is_matched:
+			status_changed.emit("방장과 게임 버전이 달라요 (나: 빌드 %d, 방장: 빌드 %d). 둘 다 최신으로 업데이트해 주세요" % [game_build, int(msg.get("build", 0))])
+			_outbox.clear()
+		return
 	if not msg.has("n"):
 		return
 	var n2 := int(msg["n"])
