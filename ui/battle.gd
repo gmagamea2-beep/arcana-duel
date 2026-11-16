@@ -1379,7 +1379,7 @@ func _fx_combo(fx: Dictionary) -> void:
 	for box in [op_board, me_board]:
 		for cv in box.get_children():
 			if cv is CardView and cv.inst != null and (fx["uids"] as Array).has(cv.inst.uid):
-				var bt := cv.create_tween()
+				var bt: Tween = cv.create_tween()
 				bt.tween_property(cv, "scale", Vector2(1.15, 1.15), 0.15).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 				bt.tween_property(cv, "scale", Vector2.ONE, 0.25)
 
