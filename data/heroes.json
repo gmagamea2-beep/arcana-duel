@@ -20,10 +20,10 @@
     "forest": {"name": "새싹 심기", "cost": 2, "text": "묘목(1/1) 소환", "effects": [{"do": "summon", "token": "T_SAPLING", "count": 1}]},
     "emperor": {"name": "천공의 심판", "cost": 2, "target": "enemy", "text": "적 하나에 2 피해", "effects": [{"do": "damage", "target": "chosen", "amount": 2}]},
     "dragon_call": {"name": "용의 부름", "cost": 3, "text": "새끼 용(2/2 드래곤) 소환", "effects": [{"do": "summon", "token": "T_WHELP", "count": 1}]},
-    "royal_tax": {"name": "왕실 세금", "cost": 2, "text": "골드 +2", "effects": [{"do": "gold", "amount": 2}]},
-    "dominate": {"name": "지배", "cost": 2, "target": "enemy_unit", "text": "적 유닛 하나에 2 피해, 골드 +1", "effects": [{"do": "damage", "target": "chosen", "amount": 2}, {"do": "gold", "amount": 1}]},
+    "royal_tax": {"name": "왕실 세금", "cost": 1, "text": "골드 +2", "effects": [{"do": "gold", "amount": 2}]},
+    "dominate": {"name": "지배", "cost": 3, "target": "enemy_unit", "text": "적 유닛 하나에 2 피해, 골드 +1", "effects": [{"do": "damage", "target": "chosen", "amount": 2}, {"do": "gold", "amount": 1}]},
     "mana_flow": {"name": "마나 응축", "cost": 3, "text": "최대 마나 +1", "effects": [{"do": "ramp", "amount": 1}]},
-    "blood_strike": {"name": "흡혈 일격", "cost": 2, "target": "enemy", "text": "적 하나에 1 피해, 내 영웅 체력 2 회복", "effects": [{"do": "damage", "target": "chosen", "amount": 1}, {"do": "heal", "target": "my_hero", "amount": 2}]},
+    "blood_strike": {"name": "흡혈 일격", "cost": 2, "target": "enemy", "text": "적 하나에 1 피해, 내 영웅 체력 1 회복", "effects": [{"do": "damage", "target": "chosen", "amount": 1}, {"do": "heal", "target": "my_hero", "amount": 1}]},
     "starlight": {"name": "별빛 축복", "cost": 2, "target": "friendly", "text": "아군 하나(영웅 포함) 체력 3 회복", "effects": [{"do": "heal", "target": "chosen", "amount": 3}]},
     "rally": {"name": "전투 함성", "cost": 2, "target": "friendly_unit", "text": "아군 유닛 하나 +1/+1", "effects": [{"do": "buff", "target": "chosen", "atk": 1, "hp": 1}]},
     "howl": {"name": "늑대 부르기", "cost": 3, "text": "늑대(2/2) 소환", "effects": [{"do": "summon", "token": "T_WOLF", "count": 1}]}

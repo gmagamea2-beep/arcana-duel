@@ -104,6 +104,7 @@ func _build() -> void:
 
 	stage = Control.new()
 	stage.custom_minimum_size = Vector2(760, STAGE.y + 40)
+	stage.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	stage.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	v.add_child(stage)
 	stage_card = HeroCard.new().setup(CardDB.hero_order[0], STAGE)

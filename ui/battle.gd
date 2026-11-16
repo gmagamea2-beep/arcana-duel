@@ -1240,8 +1240,9 @@ func _on_game_event(kind: String, info: Dictionary) -> void:
 			for u in info["units"]:
 				uids.append(u.uid)
 			_pending_fx.append({"kind": kind, "player": int(info["player"]), "combo": str(info["combo"]), "uids": uids})
-			if kind == "combo" and int(info["player"]) == ME:
-				_queue_tip("combo", "조합이 결성됐어요! 같은 시리즈나 조건에 맞는 유닛이 모이면 효과가 터지고,\n가운데 [조합 스킬] 버튼이 생겨요. 턴마다 1번 쓸 수 있어요. (조합 유닛은 색 테두리로 빛나요)")
+			if kind == "combo" and int(info["player"]) == ME and not Settings.tip_seen("combo"):
+				# 결성 연출이 끝난 뒤에 도움말
+				get_tree().create_timer(2.4).timeout.connect(_queue_tip.bind("combo", "조합이 결성됐어요! 같은 시리즈나 조건에 맞는 유닛이 모이면 효과가 터지고,\n가운데 [조합 스킬] 버튼이 생겨요. 턴마다 1번 쓸 수 있어요. (조합 유닛은 색 테두리로 빛나요)"))
 
 
 func _flush_fx() -> void:
