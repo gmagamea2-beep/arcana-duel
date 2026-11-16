@@ -876,13 +876,13 @@ func _resolve_targets(spec: String, pi: int, src: CardInst, ctx: Dictionary, e: 
 			return [me]
 		"all_enemy_units":
 			var ru: Array = []
-			for e in ens:
-				ru.append_array(e.board)
+			for ep in ens:
+				ru.append_array(ep.board)
 			return ru
 		"all_enemies":
 			var r: Array = ens.duplicate()
-			for e in ens:
-				r.append_array(e.board)
+			for ep in ens:
+				r.append_array(ep.board)
 			return r
 		"my_units":
 			return me.board.duplicate()
