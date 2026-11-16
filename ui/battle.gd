@@ -22,7 +22,14 @@ const Profile = preload("res://ui/profile.gd")
 
 ## 나 / 상대의 플레이어 번호 (온라인에서 내가 손님이면 1 / 0)
 var ME := 0
+## 위쪽에 크게 보여 주는 다른 사람 자리 (1:1 이면 상대, 다인전이면 고른 사람)
 var OP := 1
+## 다인전 (로컬 AI 대전): 자리별 영웅과 팀. 비어 있으면 1:1
+var seat_heroes: Array = []
+var seat_teams: Array = []
+var ai_ally = null
+var chips_box: HBoxContainer
+
 const TURN_TIME := 90
 const RIGHT_W := 480
 const AI_DELAY := 0.7
@@ -211,10 +218,14 @@ func _build() -> void:
 	var op_bar := _bar()
 	left_area.add_child(op_bar)
 	op_hero_view = HeroView.new()
-	op_hero_view.pressed.connect(_on_hero_pressed.bind(OP))
+	op_hero_view.pressed.connect(_on_op_hero_pressed)
 	op_bar.add_child(op_hero_view)
 	op_info = _label("", 22, Art.COL_SUB)
 	op_bar.add_child(op_info)
+	# 다인전: 다른 사람들 요약 칩 (누르면 위쪽에 크게 보기)
+	chips_box = HBoxContainer.new()
+	chips_box.add_theme_constant_override("separation", 8)
+	op_bar.add_child(chips_box)
 	op_bar.add_child(_spacer())
 	op_bar.add_child(_label("함정", 18, Art.COL_SUB))
 	op_traps_box = HBoxContainer.new()
@@ -491,20 +502,38 @@ func _start_game() -> void:
 		my_hero = net.heroes[ME]
 		op_hero = net.heroes[OP]
 		game.start(net.heroes[0], net.heroes[1], net.seed_value, names)
+	elif seat_heroes.size() > 2:
+		var names: Array = []
+		var enemy_n := 0
+		for i in seat_heroes.size():
+			if i == ME:
+				names.append("나")
+			elif int(seat_teams[i]) == int(seat_teams[ME]):
+				names.append("팀원")
+			else:
+				enemy_n += 1
+				names.append("상대 %d" % enemy_n)
+		game.start_multi(seat_heroes, seat_teams, -1, names)
 	else:
 		game.start(my_hero, op_hero, -1, ["나", "상대"])
+	OP = game.opponent(ME).idx
 	game.logged.connect(_on_log)
 	game.game_event.connect(_on_game_event)
 	ai = AI.new()
 	ai.level = ai_level
+	ai_ally = AI.new()
+	ai_ally.level = 2
 	if net == null and not tutorial_mode:
-		game.apply_handicap(OP, AI.DIFFICULTIES[clampi(ai_level, 0, AI.DIFFICULTIES.size() - 1)])
+		for q in game.enemies(ME):
+			game.apply_handicap(q, AI.DIFFICULTIES[clampi(ai_level, 0, AI.DIFFICULTIES.size() - 1)])
 	if tutorial_mode:
 		tutorial = Tutorial.new()
 		ai.level = 0
 		tutorial.setup(game)
 	elif net == null:
-		game.mulligan(OP, [])
+		for q in game.players.size():
+			if q != ME:
+				game.mulligan(q, [])
 	log_label.clear()
 	for l in game.log_lines:
 		_on_log(l)
@@ -560,34 +589,49 @@ func _run_ai() -> void:
 	busy = true
 	_run_id += 1
 	var my_id := _run_id
-	_refresh()
-	_banner("상대 턴", Art.COL_TARGET)
-	await _wait(0.9)
-	var guard := 0
-	while my_id == _run_id and game.phase == "play" and game.current == OP and guard < 200:
-		guard += 1
-		var a: Dictionary = {}
-		if tutorial != null:
-			a = tutorial.op_action(game)
-		if a.is_empty():
-			a = ai.choose_action(game, OP)
-		if a.is_empty():
-			break
-		_snapshot_positions()
-		var ok: bool = game.apply_action(OP, a)
-		if not ok:
-			game.apply_action(OP, {"type": "end"})
+	var turns := 0
+	while my_id == _run_id and game.phase == "play" and game.current != ME and turns < 8:
+		turns += 1
+		var seat: int = game.current
+		_set_focus(seat)
+		var ally := not game.is_enemy(ME, seat)
+		var who := "상대 턴" if not game.is_multi() else "%s의 턴" % game.players[seat].name
+		_banner(who, Art.COL_OK.lerp(Color.WHITE, 0.3) if ally else Art.COL_TARGET)
+		await _wait(0.9)
+		var brain = ai_ally if ally else ai
+		var guard := 0
+		while my_id == _run_id and game.phase == "play" and game.current == seat and guard < 200:
+			guard += 1
+			var a: Dictionary = {}
+			if tutorial != null:
+				a = tutorial.op_action(game)
+			if a.is_empty():
+				a = brain.choose_action(game, seat)
+			if a.is_empty():
+				break
+			_snapshot_positions()
+			var ok: bool = game.apply_action(seat, a)
+			if not ok:
+				game.apply_action(seat, {"type": "end"})
+			_refresh()
+			_flush_fx()
+			if a["type"] == "end" or not ok:
+				break
+			var delay := AI_DELAY if a["type"] in ["play", "attack", "power", "buy", "combo"] else 0.3
+			await _wait(delay)
+		if my_id != _run_id:
+			return
+		if game.phase == "play" and game.current == seat:
+			game.apply_action(seat, {"type": "end"})
 		_refresh()
 		_flush_fx()
-		if a["type"] == "end" or not ok:
-			break
-		var delay := AI_DELAY if a["type"] in ["play", "attack", "power", "buy"] else 0.3
-		await _wait(delay)
+		if game.phase == "play" and game.current != ME:
+			await _wait(0.4)
 	if my_id != _run_id:
 		return
-	if game.phase == "play" and game.current == OP:
-		game.apply_action(OP, {"type": "end"})
 	busy = false
+	if game.phase == "play" and game.current == ME and game.is_multi():
+		_focus_enemy()
 	_refresh()
 	_flush_fx()
 	if game.phase == "over":
@@ -596,6 +640,67 @@ func _run_ai() -> void:
 		_banner("내 턴", Art.COL_OK)
 		_on_my_turn_start()
 	_update_coach()
+
+
+## 다인전: 위쪽에 크게 볼 사람 바꾸기
+func _set_focus(seat: int) -> void:
+	if seat == ME or seat < 0 or seat >= game.players.size():
+		return
+	if OP != seat:
+		OP = seat
+		op_hero_view.setup(game.players[OP])
+		_refresh()
+
+
+## 살아 있는 적 중 하나로 (지금 보는 사람이 탈락했거나 팀원이면)
+func _focus_enemy() -> void:
+	var p: PlayerState = game.players[OP]
+	if p.alive and game.is_enemy(ME, OP):
+		return
+	var es: Array = game.enemies(ME)
+	if not es.is_empty():
+		_set_focus(es[0])
+
+
+func _on_op_hero_pressed(v: Control) -> void:
+	_on_hero_pressed(v, OP)
+
+
+func _on_chip(seat: int) -> void:
+	_set_focus(seat)
+
+
+func _fill_chips() -> void:
+	_clear(chips_box)
+	if not game.is_multi():
+		return
+	for q in game.turn_order(ME):
+		if q == ME:
+			continue
+		var p: PlayerState = game.players[q]
+		var ally := not game.is_enemy(ME, q)
+		var b := Button.new()
+		b.custom_minimum_size = Vector2(170, 96)
+		b.add_theme_font_size_override("font_size", int(17 * Art.ts()))
+		var hd: Dictionary = CardDB.heroes[p.hero_id]
+		if p.alive:
+			b.text = "%s%s · %s\n체력 %d%s · 유닛 %d" % ["▶ " if game.current == q else "", p.name, hd["name"], p.hp, (" 방어 %d" % p.armor) if p.armor > 0 else "", p.board.size()]
+		else:
+			b.text = "%s · %s\n탈락" % [p.name, hd["name"]]
+		var col := Color("#22c55e") if ally else Color("#ef4444")
+		if not p.alive:
+			col = Color("#4b5563")
+		var sb := Art.panel_style(col.darkened(0.7), col if q == OP else col.darkened(0.35), 4 if q == OP else 2, 10)
+		sb.content_margin_left = 8
+		sb.content_margin_right = 8
+		b.add_theme_stylebox_override("normal", sb)
+		b.add_theme_stylebox_override("hover", sb)
+		b.add_theme_stylebox_override("pressed", sb)
+		if game.current == q:
+			b.add_theme_color_override("font_color", Art.COL_SEL)
+		b.pressed.connect(_on_chip.bind(q))
+		b.set_meta("seat", q)
+		chips_box.add_child(b)
 
 
 func _wait(sec: float) -> void:
@@ -620,6 +725,8 @@ func _refresh() -> void:
 	op_hero_view.queue_redraw()
 	me_hero_view.queue_redraw()
 	op_info.text = "손패 %d장\n덱 %d · 버린 더미 %d\n마나 %d/%d · 골드 %d" % [op.hand.size(), op.deck.size(), op.discard.size(), op.mana, op.max_mana, op.gold]
+	if game.is_multi():
+		op_info.text = "[%s%s]\n" % [op.name, "" if op.alive else " · 탈락"] + op_info.text
 	if net == null and not tutorial_mode and ai_level >= 2:
 		op_info.text = "난이도 %s · " % AI.DIFFICULTIES[ai_level]["name"] + op_info.text
 	var op_combos: Array = []
@@ -632,6 +739,7 @@ func _refresh() -> void:
 		me_info.text += "\n마나 한도 %d" % me.mana_cap
 	deck_pile.set_state(me.deck.size())
 	discard_pile.set_state(me.discard.size(), me.discard.back().data if not me.discard.is_empty() else {})
+	_fill_chips()
 	_fill_traps(op_traps_box, op, false)
 	_fill_traps(me_traps_box, me, true)
 	_fill_board(op_board, op, OP)
@@ -651,8 +759,10 @@ func _refresh() -> void:
 			turn_label.text += " · %d초" % maxi(0, int(ceil((_turn_deadline - Time.get_ticks_msec()) / 1000.0)))
 		turn_label.add_theme_color_override("font_color", Art.COL_OK)
 	else:
-		turn_label.text = "상대 턴" + (" (생각 중...)" if net != null else "")
-		turn_label.add_theme_color_override("font_color", Art.COL_TARGET)
+		var cur: PlayerState = game.players[game.current]
+		var ally_turn := not game.is_enemy(ME, game.current)
+		turn_label.text = ("%s의 턴" % cur.name if game.is_multi() else "상대 턴") + (" (생각 중...)" if net != null else "")
+		turn_label.add_theme_color_override("font_color", Art.COL_OK if ally_turn else Art.COL_TARGET)
 
 
 func _target_hl(side: int, slot: int) -> String:
@@ -1010,7 +1120,7 @@ func _begin_targeting(action: Dictionary, targets: Array, hint: String) -> void:
 
 func _try_target(t: Dictionary) -> void:
 	if not Game.target_in(targeting["targets"], t):
-		if targeting.get("type", "") == "attack" and int(t["side"]) == OP and int(t["slot"]) < 0:
+		if targeting.get("type", "") == "attack" and game.is_enemy(ME, int(t["side"])) and int(t["slot"]) < 0:
 			_show_hint("도발 유닛이 있어서 영웅을 공격할 수 없어요. 도발 유닛부터 공격하세요!")
 			_queue_tip("taunt", "도발: 상대 필드에 '도발' 유닛(두꺼운 회색 테두리)이 있으면, 유닛으로는 그 도발 유닛만 공격할 수 있어요.\n도발을 먼저 처치하거나, 주문·영웅 능력으로 처리하세요. (주문은 도발과 상관없이 영웅을 노릴 수 있어요)")
 		else:
@@ -1164,7 +1274,7 @@ func _on_end_pressed() -> void:
 		return
 	sel = {}
 	targeting = {}
-	if _do({"type": "end"}) and game.phase == "play" and game.current == OP:
+	if _do({"type": "end"}) and game.phase == "play" and game.current != ME:
 		if net != null:
 			_begin_remote_turn()
 		else:
@@ -1207,6 +1317,9 @@ func _snapshot_positions() -> void:
 		var mv = market_box.get_child(i)
 		_pos_cache["m%d" % i] = mv.global_position + mv.size / 2.0
 	_pos_cache["h%d" % ME] = me_hero_view.global_position + me_hero_view.size / 2.0
+	for chip in chips_box.get_children():
+		if chip.has_meta("seat"):
+			_pos_cache["h%d" % int(chip.get_meta("seat"))] = chip.global_position + chip.size / 2.0
 	_pos_cache["h%d" % OP] = op_hero_view.global_position + op_hero_view.size / 2.0
 
 
@@ -1216,13 +1329,13 @@ func _on_game_event(kind: String, info: Dictionary) -> void:
 			_pending_fx.append({"kind": kind, "key": _key_of(info["obj"]), "amount": int(info["amount"]), "armor": int(info.get("armor", 0))})
 		"trap":
 			_pending_fx.append({"kind": "trap", "name": info["card"].display_name(), "player": int(info["player"])})
-			if int(info["player"]) == OP:
+			if int(info["player"]) != ME:
 				_queue_tip("trap", "상대의 함정이 발동했어요! 함정은 뒷면으로 놓였다가, 내 턴에 조건이 맞으면 자동으로 발동해요.\n상대 함정 칸의 '?' 카드를 조심하세요. (그림자 군주는 상대 함정을 모두 파괴해요)")
 		"play":
-			if int(info["player"]) == OP:
+			if int(info["player"]) != ME:
 				_pending_fx.append({"kind": "reveal", "card": info["card"]})
 		"buy":
-			if int(info["player"]) == OP:
+			if int(info["player"]) != ME:
 				_pending_fx.append({"kind": "opbuy", "name": info["card"].display_name()})
 			_pending_fx.append({"kind": "buyfly", "player": int(info["player"]), "data": info["card"].data, "slot": int(info.get("slot", 0))})
 		"draw":
@@ -1525,7 +1638,7 @@ func _on_mull_confirm() -> void:
 	overlay.visible = false
 	_clear(overlay)
 	_refresh()
-	if game.phase == "play" and game.current == OP:
+	if game.phase == "play" and game.current != ME:
 		_run_ai()
 	else:
 		_banner("내 턴", Art.COL_OK)
@@ -1539,19 +1652,30 @@ func _show_game_over() -> void:
 	var v := _modal()
 	var text := "무승부"
 	var col := Art.COL_SEL
-	if game.winner == ME:
-		text = "승리!"
+	var i_won: bool = game.winner == me.team
+	if i_won:
+		var team_size := 0
+		for p in game.players:
+			if p.team == me.team:
+				team_size += 1
+		text = "팀 승리!" if team_size > 1 else "승리!"
 		col = Art.COL_OK
-	elif game.winner == OP:
+	elif game.winner != Game.DRAW:
 		text = "패배..."
 		col = Art.COL_TARGET
 	var title := _label(text, 96, col, true)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(title)
-	var sub := _label("내 턴 %d번 · 내 체력 %d · 상대 체력 %d" % [me.turn_count, me.hp, op.hp], 24, Art.COL_SUB)
+	var sub_text := "내 턴 %d번 · 내 체력 %d · 상대 체력 %d" % [me.turn_count, me.hp, op.hp]
+	if game.is_multi():
+		var parts: Array = []
+		for p in game.players:
+			parts.append("%s %s" % [p.name, ("체력 %d" % p.hp) if p.alive else "탈락"])
+		sub_text = "내 턴 %d번 · " % me.turn_count + " · ".join(PackedStringArray(parts))
+	var sub := _label(sub_text, 24, Art.COL_SUB)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(sub)
-	if net == null and not tutorial_mode and game.winner == ME:
+	if net == null and not tutorial_mode and i_won:
 		var reward := Profile.win_reward(ai_level)
 		var total := Profile.add_crystals(reward)
 		var rl := _label("마석 +%d 획득! (보유 %d)\n메인 메뉴의 [영웅 뽑기]에서 마석 %d으로 새 영웅을 뽑을 수 있어요" % [reward, total, Profile.pull_cost()], 26, Color("#67e8f9"), true)
@@ -1804,7 +1928,7 @@ func _fx_draw(fx: Dictionary, delay: float) -> void:
 	if fast:
 		_anim_hidden.erase(uid)
 		return
-	if int(fx["player"]) == OP:
+	if int(fx["player"]) != ME:
 		var r := op_info.get_global_rect()
 		_fly(fx["data"], "back", r.position + Vector2(20, r.size.y / 2.0), r.position + Vector2(140, 10), 0.25, 0.25, delay, 0.3, false)
 		return
@@ -2025,7 +2149,11 @@ func _target_at(pos: Vector2) -> Dictionary:
 
 func _view_for_target(t: Dictionary) -> Control:
 	if int(t["slot"]) < 0:
-		return op_hero_view if int(t["side"]) == OP else me_hero_view
+		if int(t["side"]) == ME:
+			return me_hero_view
+		return op_hero_view if int(t["side"]) == OP else null
+	if int(t["side"]) != ME and int(t["side"]) != OP:
+		return null
 	var box := op_board if int(t["side"]) == OP else me_board
 	for v in box.get_children():
 		if v is CardView and v.has_meta("slot") and int(v.get_meta("slot")) == int(t["slot"]):

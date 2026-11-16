@@ -27,12 +27,17 @@ var _start_btn: Button = null
 var _online_btn: Button = null
 var _level_btns: Array = []
 var _level_desc: Label = null
+## 대전 방식: "1v1", "ffa3" (1:1:1), "2v2"
+var mode := "1v1"
+var _mode_btns := {}
+const MODES := [["1v1", "1 : 1"], ["ffa3", "1 : 1 : 1"], ["2v2", "2 : 2 (팀)"]]
 
 
 func _ready() -> void:
 	CardDB.load_all()
 	selected_hero = str(Settings.get_value("selected_hero", "fire"))
 	ai_level = clampi(int(Settings.get_value("ai_level", 1)), 0, AI.DIFFICULTIES.size() - 1)
+	mode = str(Settings.get_value("mode", "1v1"))
 	if not CardDB.heroes.has(selected_hero) or not Profile.is_owned(selected_hero):
 		selected_hero = "fire"
 	theme = Art.make_theme()
@@ -120,6 +125,23 @@ func _show_menu() -> void:
 	_level_desc = _label("", 19, Art.COL_SUB)
 	v.add_child(_level_desc)
 	_on_level(ai_level)
+
+	var mr := HBoxContainer.new()
+	mr.alignment = BoxContainer.ALIGNMENT_CENTER
+	mr.add_theme_constant_override("separation", 12)
+	v.add_child(mr)
+	mr.add_child(_label("대전 방식", 24, Art.COL_SUB))
+	_mode_btns.clear()
+	for pair in MODES:
+		var mb := Button.new()
+		mb.text = pair[1]
+		mb.toggle_mode = true
+		mb.custom_minimum_size = Vector2(170, 52)
+		mb.pressed.connect(_on_mode.bind(pair[0]))
+		mr.add_child(mb)
+		_mode_btns[pair[0]] = mb
+	mr.add_child(_label("  (1:1:1 = 셋이 각자, 2:2 = 나 + 팀원 vs 둘)", 18, Art.COL_SUB))
+	_on_mode(mode)
 
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -301,6 +323,28 @@ func _on_text_scale(v: float) -> void:
 	_show_menu()
 
 
+func _on_mode(m: String) -> void:
+	mode = m
+	Settings.set_value("mode", m)
+	for k in _mode_btns:
+		if is_instance_valid(_mode_btns[k]):
+			_mode_btns[k].button_pressed = k == m
+
+
+## 자리별 영웅·팀 (나는 0번 자리). 다른 자리 영웅은 겹치지 않게 무작위
+func seat_setup(m: String, me_hero: String) -> Array:
+	var pool: Array = CardDB.hero_order.duplicate()
+	pool.erase(me_hero)
+	pool.shuffle()
+	match m:
+		"ffa3":
+			return [[me_hero, pool[0], pool[1]], [0, 1, 2]]
+		"2v2":
+			# 차례: 나 → 상대 1 → 팀원 → 상대 2
+			return [[me_hero, pool[0], pool[1], pool[2]], [0, 1, 0, 1]]
+	return [[me_hero, pool[0]], [0, 1]]
+
+
 func _on_level(i: int) -> void:
 	ai_level = i
 	Settings.set_value("ai_level", i)
@@ -340,9 +384,11 @@ func _start_battle() -> void:
 		selected_hero = "fire"
 	var b := Battle.new()
 	b.my_hero = selected_hero
-	var others: Array = CardDB.hero_order.duplicate()
-	others.erase(selected_hero)
-	b.op_hero = others[randi() % others.size()]
+	var setup := seat_setup(mode, selected_hero)
+	b.op_hero = setup[0][1]
+	if mode != "1v1":
+		b.seat_heroes = setup[0]
+		b.seat_teams = setup[1]
 	b.ai_level = ai_level
 	b.exit_to_menu.connect(_show_menu)
 	b.restart_requested.connect(_start_battle)
