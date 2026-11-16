@@ -9,6 +9,7 @@ const NetMatch = preload("res://net/net_match.gd")
 const HeroCard = preload("res://ui/hero_card.gd")
 const Profile = preload("res://ui/profile.gd")
 const Gacha = preload("res://ui/gacha.gd")
+const AI = preload("res://ai/simple_ai.gd")
 
 const VERSION := "알파 v0.1"
 
@@ -25,11 +26,13 @@ var _hero_detail: HBoxContainer = null
 var _start_btn: Button = null
 var _online_btn: Button = null
 var _level_btns: Array = []
+var _level_desc: Label = null
 
 
 func _ready() -> void:
 	CardDB.load_all()
 	selected_hero = str(Settings.get_value("selected_hero", "fire"))
+	ai_level = clampi(int(Settings.get_value("ai_level", 1)), 0, AI.DIFFICULTIES.size() - 1)
 	if not CardDB.heroes.has(selected_hero) or not Profile.is_owned(selected_hero):
 		selected_hero = "fire"
 	theme = Art.make_theme()
@@ -103,14 +106,19 @@ func _show_menu() -> void:
 	v.add_child(lv)
 	lv.add_child(_label("상대 난이도", 24, Art.COL_SUB))
 	_level_btns.clear()
-	for i in 2:
+	for i in AI.DIFFICULTIES.size():
 		var b := Button.new()
-		b.text = ["쉬움", "보통"][i]
+		b.text = AI.DIFFICULTIES[i]["name"]
 		b.toggle_mode = true
-		b.custom_minimum_size = Vector2(120, 52)
+		b.custom_minimum_size = Vector2(110, 52)
+		b.add_theme_font_size_override("font_size", int(21 * Art.ts()))
+		if i >= 4:
+			b.add_theme_color_override("font_color", Color("#fca5a5"))
 		b.pressed.connect(_on_level.bind(i))
 		lv.add_child(b)
 		_level_btns.append(b)
+	_level_desc = _label("", 19, Art.COL_SUB)
+	v.add_child(_level_desc)
 	_on_level(ai_level)
 
 	var row := HBoxContainer.new()
@@ -295,8 +303,12 @@ func _on_text_scale(v: float) -> void:
 
 func _on_level(i: int) -> void:
 	ai_level = i
+	Settings.set_value("ai_level", i)
 	for k in _level_btns.size():
-		_level_btns[k].button_pressed = k == i
+		if is_instance_valid(_level_btns[k]):
+			_level_btns[k].button_pressed = k == i
+	if _level_desc != null and is_instance_valid(_level_desc):
+		_level_desc.text = AI.difficulty_text(i)
 
 
 func _label(text: String, fsize: int, color: Color, use_bold: bool = false) -> Label:
@@ -406,7 +418,12 @@ const RULES_TEXT := """[b]목표[/b]
 · 레어 카드 중에는 일반 카드의 [b]상위 호환[/b]이 있습니다 (같은 비용에 더 강함).
 
 [b]영웅 뽑기[/b]
-· AI 대전에서 이기면 마석을 얻습니다 (쉬움 +30, 보통 +50). 마석 100으로 새 영웅을 뽑습니다.
+· AI 대전에서 이기면 마석을 얻습니다 (쉬움 +30 ~ 얼티밋 +500). 마석 100으로 새 영웅을 뽑습니다.
+
+[b]난이도[/b]
+· 쉬움 · 보통 · 어려움 · 매우 어려움 · 헬 · 마스터 · 갓 · 얼티밋
+· 어려움부터는 AI가 행동을 미리 해 보고 가장 좋은 수를 고릅니다.
+· 매우 어려움부터는 AI에게 보너스가 붙습니다 (체력 30~50, 매 턴 골드·카드 추가, 시작 마나 추가).
 · 이미 가진 영웅은 나오지 않습니다. 새 영웅은 시작 덱에 전용 카드 1장이 들어 있습니다."""
 
 

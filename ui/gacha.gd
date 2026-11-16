@@ -98,9 +98,8 @@ func _build() -> void:
 	cr.add_child(crystal_label)
 
 	var w: Dictionary = CardDB.gacha.get("weights", {})
-	var rw: Array = CardDB.gacha.get("win_reward", [30, 50])
-	v.add_child(_label("1회 마석 %d · 레어 %d%% · 에픽 %d%% · 레전더리 %d%% · 이미 가진 영웅은 나오지 않아요\nAI 대전에서 이기면 마석을 얻어요 (쉬움 +%d, 보통 +%d)" % [
-		Profile.pull_cost(), int(w.get("rare", 0)), int(w.get("epic", 0)), int(w.get("legendary", 0)), int(rw[0]), int(rw[1])], 19, Art.COL_SUB))
+	v.add_child(_label("1회 마석 %d · 레어 %d%% · 에픽 %d%% · 레전더리 %d%% · 이미 가진 영웅은 나오지 않아요\nAI 대전에서 이기면 마석을 얻어요 (쉬움 +%d ~ 얼티밋 +%d)" % [
+		Profile.pull_cost(), int(w.get("rare", 0)), int(w.get("epic", 0)), int(w.get("legendary", 0)), Profile.win_reward(0), Profile.win_reward(7)], 19, Art.COL_SUB))
 
 	stage = Control.new()
 	stage.custom_minimum_size = Vector2(760, STAGE.y + 40)

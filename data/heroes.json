@@ -28,5 +28,5 @@
     "rally": {"name": "전투 함성", "cost": 2, "target": "friendly_unit", "text": "아군 유닛 하나 +1/+1", "effects": [{"do": "buff", "target": "chosen", "atk": 1, "hp": 1}]},
     "howl": {"name": "늑대 부르기", "cost": 3, "text": "늑대(2/2) 소환", "effects": [{"do": "summon", "token": "T_WOLF", "count": 1}]}
   },
-  "gacha": {"cost": 100, "weights": {"rare": 55, "epic": 30, "legendary": 15}, "win_reward": [30, 50], "start_crystals": 100}
+  "gacha": {"cost": 100, "weights": {"rare": 55, "epic": 30, "legendary": 15}, "start_crystals": 100}
 }

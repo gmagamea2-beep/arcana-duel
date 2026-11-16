@@ -35,6 +35,9 @@ var mulligan_done := false
 ## 결성된 조합 {조합 id: true}, 이번 턴에 쓴 조합 스킬
 var combos := {}
 var combo_used := {}
+## AI 난이도 보너스: 매 턴 추가로 뽑는 카드 수, 매 턴 받는 골드
+var extra_draw := 0
+var gold_per_turn := 0
 
 
 func total_cards() -> int:

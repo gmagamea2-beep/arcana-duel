@@ -116,6 +116,7 @@ func _init() -> void:
 	print("조합 결성 횟수 (조합 스킬 사용 %d회):" % combo_skills)
 	for k in CardDB.combos:
 		print("  %s: %d회" % [k["name"], int(combo_formed.get(k["id"], 0))])
+	_compare_levels()
 	print("카드별 '구매한 쪽 승률' (구매 20회 이상):")
 	var ids: Array = bought.keys()
 	ids.sort_custom(func(a, b): return float(buyer_wins.get(a, 0)) / bought[a] > float(buyer_wins.get(b, 0)) / bought[b])
@@ -123,3 +124,45 @@ func _init() -> void:
 		if bought[id] >= 20:
 			print("  %s %s: %.0f%% (%d회)" % [id, CardDB.cards[id]["name"], 100.0 * buyer_wins.get(id, 0) / bought[id], bought[id]])
 	quit()
+
+
+
+## 어려움 AI(미리 해 보기) vs 보통 AI, 보너스 없이 자리를 바꿔 가며
+func _compare_levels() -> void:
+	var hard := AI.new()
+	hard.level = 2
+	hard.rng.seed = 3
+	var norm := AI.new()
+	norm.level = 1
+	norm.rng.seed = 4
+	var n := 16
+	var hard_wins := 0
+	var done := 0
+	var t0 := Time.get_ticks_msec()
+	for gi in n:
+		var g := Game.new()
+		g.start(CardDB.hero_order[gi % 4], CardDB.hero_order[(gi + 1) % 4], 9000 + gi)
+		g.mulligan(0, [])
+		g.mulligan(1, [])
+		var hard_seat := gi % 2
+		var steps := 0
+		var per_turn := 0
+		var last_turn := -1
+		while g.phase == "play" and steps < 6000:
+			var pi: int = g.current
+			if g.total_turns != last_turn:
+				last_turn = g.total_turns
+				per_turn = 0
+			per_turn += 1
+			var a: Dictionary = (hard if pi == hard_seat else norm).choose_action(g, pi)
+			if per_turn > 150 or a.is_empty():
+				a = {"type": "end"}
+			if not g.apply_action(pi, a):
+				print("행동 실패: (난이도 점검) ", a)
+				g.apply_action(pi, {"type": "end"})
+			steps += 1
+		if g.phase == "over" and g.winner != 2:
+			done += 1
+			if g.winner == hard_seat:
+				hard_wins += 1
+	print("난이도 점검: 어려움 AI가 보통 AI 상대로 %d / %d판 승리 (%.0f%%), %.1f초" % [hard_wins, done, 100.0 * hard_wins / maxi(1, done), (Time.get_ticks_msec() - t0) / 1000.0])

@@ -9,8 +9,42 @@ const PlayerState = preload("res://core/player_state.gd")
 const CLEAN_COST := 2
 const RARITY_VALUE := {"common": 1.0, "rare": 2.0, "epic": 3.0, "legendary": 4.5, "mythic": 6.0, "ultimate": 8.0}
 
-## 0 = 쉬움 (가끔 실수), 1 = 보통
+## 난이도. 0 쉬움(가끔 실수), 1 보통(규칙대로), 2 이상은 행동을 하나씩 미리 해 보고 가장 좋은 수를 고른다.
+## 3 이상은 AI 쪽에 보너스(체력, 매 턴 골드·카드, 시작 마나)가 붙는다.
+const DIFFICULTIES := [
+	{"name": "쉬움", "reward": 30},
+	{"name": "보통", "reward": 50},
+	{"name": "어려움", "reward": 80},
+	{"name": "매우 어려움", "reward": 120, "hp": 30, "gold": 1},
+	{"name": "헬", "reward": 180, "hp": 35, "gold": 1, "draw": 1},
+	{"name": "마스터", "reward": 250, "hp": 40, "gold": 2, "draw": 1, "mana": 1},
+	{"name": "갓", "reward": 350, "hp": 45, "gold": 2, "draw": 1, "mana": 2},
+	{"name": "얼티밋", "reward": 500, "hp": 50, "gold": 3, "draw": 2, "mana": 2},
+]
+
 var level := 1
+
+
+## 화면에 보여 줄 난이도 설명
+static func difficulty_text(lv: int) -> String:
+	var d: Dictionary = DIFFICULTIES[clampi(lv, 0, DIFFICULTIES.size() - 1)]
+	var parts: Array = []
+	if lv == 0:
+		parts.append("AI가 가끔 실수해요")
+	elif lv == 1:
+		parts.append("AI가 규칙대로 둬요")
+	else:
+		parts.append("AI가 수를 미리 읽어요")
+	if d.has("hp"):
+		parts.append("AI 체력 %d" % int(d["hp"]))
+	if d.has("gold"):
+		parts.append("매 턴 골드 +%d" % int(d["gold"]))
+	if d.has("draw"):
+		parts.append("매 턴 카드 +%d" % int(d["draw"]))
+	if d.has("mana"):
+		parts.append("시작 마나 +%d" % int(d["mana"]))
+	parts.append("승리 보상 마석 %d" % int(d["reward"]))
+	return " · ".join(PackedStringArray(parts))
 var rng := RandomNumberGenerator.new()
 
 
@@ -22,6 +56,12 @@ func choose_action(g, pi: int) -> Dictionary:
 	if g.phase != "play" or g.current != pi:
 		return {}
 	var a: Dictionary
+	if level >= 2:
+		for step in [_lethal, _search, _clean, _pitch, _buy, _refresh]:
+			a = step.call(g, pi)
+			if not a.is_empty():
+				return a
+		return {"type": "end"}
 	for step in [_lethal, _best_play, _power, _combo_skill, _best_attack, _clean, _pitch, _buy, _refresh]:
 		a = step.call(g, pi)
 		if not a.is_empty():
@@ -508,3 +548,90 @@ func _refresh(g, pi: int) -> Dictionary:
 	if p.gold >= 8 and g.refresh_error(pi) == "":
 		return {"type": "refresh"}
 	return {}
+
+
+# ── 어려움 이상: 미리 해 보기 ──
+## 카드 사용·영웅 능력·조합 스킬·공격 후보를 게임 복사본에서 하나씩 해 보고,
+## 상황 점수가 가장 많이 오르는 행동을 고른다. (경제 행동은 위의 규칙을 그대로 씀)
+
+func _search(g, pi: int) -> Dictionary:
+	var base := evaluate(g, pi)
+	var best_d := 0.4
+	var best: Dictionary = {}
+	for a in _candidates(g, pi):
+		var c = g.clone()
+		if not c.apply_action(pi, a):
+			continue
+		var d := evaluate(c, pi) - base
+		if d > best_d:
+			best_d = d
+			best = a
+	return best
+
+
+func _candidates(g, pi: int) -> Array:
+	var p: PlayerState = g.players[pi]
+	var res: Array = []
+	for i in p.hand.size():
+		if g.play_error(pi, i) != "":
+			continue
+		var d: Dictionary = p.hand[i].data
+		if d.has("target"):
+			for t in g.valid_targets(pi, d["target"]):
+				res.append({"type": "play", "hand": i, "target": t})
+		else:
+			res.append({"type": "play", "hand": i})
+	if g.power_error(pi) == "":
+		var pd: Dictionary = g.power_def(pi)
+		if pd.has("target"):
+			for t in g.valid_targets(pi, pd["target"]):
+				res.append({"type": "power", "target": t})
+		else:
+			res.append({"type": "power"})
+	for cid in g.active_combos(pi):
+		if g.combo_error(pi, cid) != "":
+			continue
+		var sk: Dictionary = CardDB.combo_by_id[cid]["skill"]
+		if sk.has("target"):
+			for t in g.valid_targets(pi, sk["target"]):
+				res.append({"type": "combo", "combo": cid, "target": t})
+		else:
+			res.append({"type": "combo", "combo": cid})
+	for ui in p.board.size():
+		if g.attack_error(pi, ui) != "":
+			continue
+		for t in g.attack_targets(pi):
+			res.append({"type": "attack", "unit": ui, "target": t})
+	return res
+
+
+## 상황 점수 (pi 쪽에서 볼 때 높을수록 좋음)
+func evaluate(g, pi: int) -> float:
+	if g.phase == "over":
+		if g.winner == pi:
+			return 100000.0
+		return -100000.0 if g.winner == 1 - pi else -50000.0
+	var me: PlayerState = g.players[pi]
+	var op: PlayerState = g.players[1 - pi]
+	var s := 0.0
+	var my_life := me.hp + 0.8 * me.armor
+	var op_life := op.hp + 0.8 * op.armor
+	s += 1.6 * my_life - 2.0 * op_life
+	# 상대 체력이 낮을수록 영웅 피해가 더 값지다
+	if op_life < 12:
+		s += (12.0 - op_life) * 1.5
+	if my_life < 10:
+		s -= (10.0 - my_life) * 1.5
+	for u in me.board:
+		s += unit_value(u) * 1.1
+	for u in op.board:
+		s -= unit_value(u) * 1.1
+	s += 0.6 * me.hand.size()
+	s += 0.6 * me.gold - 0.3 * op.gold
+	s += 1.5 * me.max_mana + 0.8 * me.mana_cap
+	for t in me.traps:
+		s += 2.0 + t.cost()
+	if g.field != null:
+		s += (4.0 + g.field.cost()) * (1.0 if g.field_owner == pi else -1.0)
+	s += 3.0 * me.combos.size() - 3.0 * op.combos.size()
+	return s

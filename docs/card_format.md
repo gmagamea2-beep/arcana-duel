@@ -86,4 +86,4 @@
 - `rarity`: `basic`(처음부터 보유) · `rare` · `epic` · `legendary` (뽑기 확률은 `gacha.weights`)
 - `starter: true`면 처음부터 가진 영웅. 나머지는 영웅 뽑기로 얻습니다.
 - `bonus_cards`: 시작 덱에 추가되는 전용 카드 id
-- `gacha`: `cost`(1회 마석), `weights`(희귀도별 확률), `win_reward`([쉬움, 보통] 승리 보상), `start_crystals`(처음 주는 마석)
+- `gacha`: `cost`(1회 마석), `weights`(희귀도별 확률), `start_crystals`(처음 주는 마석)

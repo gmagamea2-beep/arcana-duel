@@ -497,6 +497,8 @@ func _start_game() -> void:
 	game.game_event.connect(_on_game_event)
 	ai = AI.new()
 	ai.level = ai_level
+	if net == null and not tutorial_mode:
+		game.apply_handicap(OP, AI.DIFFICULTIES[clampi(ai_level, 0, AI.DIFFICULTIES.size() - 1)])
 	if tutorial_mode:
 		tutorial = Tutorial.new()
 		ai.level = 0
@@ -618,6 +620,8 @@ func _refresh() -> void:
 	op_hero_view.queue_redraw()
 	me_hero_view.queue_redraw()
 	op_info.text = "손패 %d장\n덱 %d · 버린 더미 %d\n마나 %d/%d · 골드 %d" % [op.hand.size(), op.deck.size(), op.discard.size(), op.mana, op.max_mana, op.gold]
+	if net == null and not tutorial_mode and ai_level >= 2:
+		op_info.text = "난이도 %s · " % AI.DIFFICULTIES[ai_level]["name"] + op_info.text
 	var op_combos: Array = []
 	for cid in game.active_combos(OP):
 		op_combos.append(CardDB.combo_by_id[cid]["name"])

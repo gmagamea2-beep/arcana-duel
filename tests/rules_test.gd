@@ -27,6 +27,9 @@ func _initialize() -> void:
 	test_mana_cards()
 	test_plunder()
 	test_gacha_pick()
+	test_clone()
+	test_handicap()
+	test_search_ai()
 	print("규칙 테스트: %d개 검사, 실패 %d개" % [checks, fails])
 	quit(1 if fails > 0 else 0)
 
@@ -278,3 +281,52 @@ func test_gacha_pick() -> void:
 	check(Profile.pick_hero(["dragon", "star"], 0.99) == "dragon", "뽑기: 높은 수 → 레전더리")
 	check(Profile.pick_hero(["dragon"], 0.1) == "dragon", "뽑기: 남은 희귀도끼리")
 	check(Profile.pick_hero([], 0.5) == "", "뽑기: 후보 없음")
+
+
+func test_clone() -> void:
+	var g := new_game()
+	put_unit(g, 0, "C1")
+	put_unit(g, 1, "S1")
+	put_hand(g, 0, "F3")
+	var c = g.clone()
+	check(c.state_hash() == g.state_hash(), "복사본은 같은 상태")
+	check(c.apply_action(0, {"type": "play", "hand": 0, "target": {"side": 1, "slot": -1}}), "복사본에서 행동")
+	check(c.players[1].hp == 21 and g.players[1].hp == 25, "복사본에서 한 행동은 원래 게임에 영향 없음")
+	check(g.players[0].hand.size() == 1 and c.players[0].hand.is_empty(), "손패도 따로")
+	c.players[0].board[0].attack = 99
+	check(g.players[0].board[0].attack == 3, "유닛도 따로")
+
+
+func test_handicap() -> void:
+	var AI = load("res://ai/simple_ai.gd")
+	var g := Game.new()
+	g.start("fire", "steel", 5)
+	g.apply_handicap(1, AI.DIFFICULTIES[7])
+	var op = g.players[1]
+	check(op.hp == 50 and op.max_hp == 50, "얼티밋: AI 체력 50")
+	g.first = 1
+	g.current = 1
+	g.mulligan(0, [])
+	g.mulligan(1, [])
+	check(op.max_mana == 3, "얼티밋: 시작 마나 +2 (첫 턴 최대 마나 %d)" % op.max_mana)
+	g.end_turn(1)
+	g.end_turn(0)
+	check(op.hand.size() >= 6, "얼티밋: 매 턴 카드 +2 (손패 %d)" % op.hand.size())
+	check(op.gold >= 6, "얼티밋: 매 턴 골드 +3 (골드 %d)" % op.gold)
+
+
+func test_search_ai() -> void:
+	var AI = load("res://ai/simple_ai.gd")
+	var ai = AI.new()
+	ai.level = 2
+	var g := new_game()
+	put_unit(g, 0, "C1")
+	put_unit(g, 1, "F1")
+	g.players[1].hp = 3
+	var a: Dictionary = ai.choose_action(g, 0)
+	check(a.get("type", "") == "attack" and int(a["target"]["slot"]) == -1, "어려움 AI: 이길 수 있으면 영웅 공격 (%s)" % str(a))
+	var g2 := new_game()
+	put_unit(g2, 1, "C1")
+	var hi := put_hand(g2, 0, "F3")
+	var a2: Dictionary = ai.choose_action(g2, 0)
+	check(a2.get("type", "") == "play" and int(a2.get("hand", -1)) == hi, "어려움 AI: 화염구 사용 (%s)" % str(a2))

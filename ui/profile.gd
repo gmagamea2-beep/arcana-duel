@@ -4,6 +4,7 @@ extends RefCounted
 
 const CardDB = preload("res://core/card_db.gd")
 const Settings = preload("res://ui/settings.gd")
+const AI = preload("res://ai/simple_ai.gd")
 
 const RARITY_ORDER := ["rare", "epic", "legendary"]
 
@@ -51,9 +52,7 @@ static func pull_cost() -> int:
 
 
 static func win_reward(ai_level: int) -> int:
-	CardDB.load_all()
-	var r: Array = CardDB.gacha.get("win_reward", [30, 50])
-	return int(r[clampi(ai_level, 0, r.size() - 1)])
+	return int(AI.DIFFICULTIES[clampi(ai_level, 0, AI.DIFFICULTIES.size() - 1)]["reward"])
 
 
 ## 아직 없는 영웅 (뽑기 후보)

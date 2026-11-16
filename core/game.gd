@@ -88,6 +88,18 @@ func start(hero0: String, hero1: String, seed_value: int = -1, names: Array = ["
 	changed.emit()
 
 
+## AI 난이도 보너스 (게임 시작 직후, 첫 턴 전에 부른다)
+## {"hp": 시작 체력, "draw": 매 턴 추가 카드, "gold": 매 턴 골드, "mana": 시작 최대 마나 보너스}
+func apply_handicap(pi: int, h: Dictionary) -> void:
+	var p: PlayerState = players[pi]
+	if int(h.get("hp", 0)) > 0:
+		p.hp = int(h["hp"])
+		p.max_hp = p.hp
+	p.extra_draw = int(h.get("draw", 0))
+	p.gold_per_turn = int(h.get("gold", 0))
+	p.max_mana = mini(p.mana_cap - 1, int(h.get("mana", 0)))
+
+
 ## 시작 손패에서 고른 카드(인덱스 목록)를 덱에 돌려보내고 같은 수만큼 다시 뽑는다.
 func mulligan(pi: int, idxs: Array) -> bool:
 	if phase != "mulligan":
@@ -586,7 +598,9 @@ func _start_turn(pi: int) -> void:
 	if phase == "over":
 		return
 	if not (pi == first and p.turn_count == 1):
-		_draw(p, maxi(1, HAND_REFILL - p.hand.size()))
+		_draw(p, maxi(1, HAND_REFILL - p.hand.size()) + p.extra_draw)
+	if p.gold_per_turn > 0:
+		_gain_gold(pi, p.gold_per_turn, "난이도 보너스")
 
 
 func _after_action() -> void:
@@ -1060,6 +1074,72 @@ func use_combo(pi: int, cid: String, target: Dictionary = {}) -> bool:
 	_run_effects(null, "", pi, {"chosen": target, "combo_units": units}, sk["effects"])
 	_after_action()
 	return true
+
+
+# ─────────────────────────────── 복제 (AI가 미리 해 보기용) ───────────────────────────────
+
+## 게임 상태를 통째로 복사한다. 복사본에서 행동을 해 봐도 원래 게임은 바뀌지 않는다.
+func clone():
+	var g = get_script().new()
+	g.current = current
+	g.first = first
+	g.phase = phase
+	g.winner = winner
+	g.market = market.duplicate()
+	g.field_owner = field_owner
+	g.unique_seen = unique_seen.duplicate()
+	g.total_turns = total_turns
+	g._uid = _uid
+	g.rng.seed = rng.seed
+	g.rng.state = rng.state
+	g.field = _clone_card(field) if field != null else null
+	for p in players:
+		g.players.append(_clone_player(p))
+	return g
+
+
+static func _clone_card(c: CardInst) -> CardInst:
+	var n := CardInst.new()
+	n.uid = c.uid
+	n.id = c.id
+	n.data = c.data
+	n.owner = c.owner
+	n.attack = c.attack
+	n.health = c.health
+	n.max_health = c.max_health
+	n.keywords = c.keywords.duplicate()
+	n.is_token = c.is_token
+	n.summoned_turn = c.summoned_turn
+	n.attacked = c.attacked
+	n.frozen = c.frozen
+	n.sleeping = c.sleeping
+	n.destroyed = c.destroyed
+	return n
+
+
+static func _clone_cards(arr: Array) -> Array:
+	var res: Array = []
+	for c in arr:
+		res.append(_clone_card(c))
+	return res
+
+
+static func _clone_player(p: PlayerState) -> PlayerState:
+	var n := PlayerState.new()
+	for k in ["idx", "name", "hero_id", "hero_name", "faction", "power_id", "is_emperor", "hp", "max_hp", "armor",
+			"mana", "max_mana", "mana_cap", "gold", "turn_count", "power_used", "refreshed", "cleaned",
+			"buy_discount", "mulligan_done", "extra_draw", "gold_per_turn"]:
+		n.set(k, p.get(k))
+	n.factions_played = p.factions_played.duplicate()
+	n.combos = p.combos.duplicate()
+	n.combo_used = p.combo_used.duplicate()
+	n.deck = _clone_cards(p.deck)
+	n.hand = _clone_cards(p.hand)
+	n.discard = _clone_cards(p.discard)
+	n.board = _clone_cards(p.board)
+	n.traps = _clone_cards(p.traps)
+	n.exiled = _clone_cards(p.exiled)
+	return n
 
 
 ## 온라인 대전용: 두 기기의 게임 상태가 같은지 비교하는 지문
