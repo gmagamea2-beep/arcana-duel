@@ -5,7 +5,8 @@ extends RefCounted
 
 signal changed
 signal logged(text: String)
-## UI 연출용 이벤트 (kind: "damage", "heal", "trap", "death", "summon", "play", "buy", "turn")
+## UI 연출용 이벤트 (kind: "damage", "heal", "trap", "death", "summon", "play", "buy", "turn",
+## "buff", "gold", "combo", "combo_skill")
 signal game_event(kind: String, info: Dictionary)
 
 const CardDB = preload("res://core/card_db.gd")
@@ -14,6 +15,7 @@ const PlayerState = preload("res://core/player_state.gd")
 
 const START_HP := 25
 const MAX_MANA := 10
+const MANA_CAP_LIMIT := 15
 const MAX_GOLD := 10
 const HAND_LIMIT := 10
 const HAND_REFILL := 5
@@ -66,6 +68,9 @@ func start(hero0: String, hero1: String, seed_value: int = -1, names: Array = ["
 		for sd in CardDB.starter:
 			for k in int(sd["count"]):
 				p.deck.append(_make(sd["id"], i))
+		# 영웅마다 시작 덱에 들어가는 전용 카드
+		for bid in hd.get("bonus_cards", []):
+			p.deck.append(_make(bid, i))
 		_shuffle(p.deck)
 		players.append(p)
 	first = rng.randi_range(0, 1)
@@ -329,7 +334,7 @@ func attack_error(pi: int, ui: int) -> String:
 # ─────────────────────────────── 행동 ───────────────────────────────
 
 ## UI 와 AI 가 공통으로 쓰는 진입점.
-## {"type": "play"|"pitch"|"clean"|"buy"|"refresh"|"power"|"attack"|"end", "hand", "market", "unit", "target"}
+## {"type": "play"|"pitch"|"clean"|"buy"|"refresh"|"power"|"attack"|"combo"|"end", "hand", "market", "unit", "target", "combo"}
 func apply_action(pi: int, a: Dictionary) -> bool:
 	match a.get("type", ""):
 		"play":
@@ -346,6 +351,8 @@ func apply_action(pi: int, a: Dictionary) -> bool:
 			return use_power(pi, a.get("target", {}))
 		"attack":
 			return attack(pi, int(a["unit"]), a.get("target", {}))
+		"combo":
+			return use_combo(pi, str(a.get("combo", "")), a.get("target", {}))
 		"end":
 			return end_turn(pi)
 	return false
@@ -512,6 +519,8 @@ func attack(pi: int, ui: int, target: Dictionary) -> bool:
 		var d_dmg := e.attack
 		_damage(e, a_dmg, u)
 		_damage(u, d_dmg, e)
+	if u.has_kw("plunder"):
+		_gain_gold(pi, 1, "약탈")
 	_after_action()
 	return true
 
@@ -525,6 +534,7 @@ func end_turn(pi: int) -> bool:
 	if field != null and field_owner == pi:
 		_run_effects(field, "field_turn_end", pi, {})
 	_resolve_deaths()
+	_update_combos()
 	_check_win()
 	if phase == "over":
 		changed.emit()
@@ -543,9 +553,10 @@ func _start_turn(pi: int) -> void:
 	var p: PlayerState = players[pi]
 	p.turn_count += 1
 	total_turns += 1
-	p.max_mana = mini(MAX_MANA, p.max_mana + 1)
+	p.max_mana = mini(p.mana_cap, p.max_mana + 1)
 	p.mana = p.max_mana
 	p.power_used = false
+	p.combo_used.clear()
 	p.refreshed = false
 	p.cleaned = false
 	p.buy_discount = 0
@@ -570,6 +581,7 @@ func _start_turn(pi: int) -> void:
 	for u in p.board.duplicate():
 		_run_effects(u, "turn_start", pi, {"self": u})
 	_resolve_deaths()
+	_update_combos()
 	_check_win()
 	if phase == "over":
 		return
@@ -579,6 +591,7 @@ func _start_turn(pi: int) -> void:
 
 func _after_action() -> void:
 	_resolve_deaths()
+	_update_combos()
 	_check_win()
 	changed.emit()
 
@@ -695,10 +708,23 @@ func _run_effects(src: CardInst, when: String, pi: int, ctx: Dictionary, effects
 			continue
 		if e.has("ally") and bool(e["ally"]) != bool(ctx.get("ally", false)):
 			continue
+		if e.has("if_tag") and tag_count(pi, e["if_tag"], src) < 1:
+			continue
+		if e.has("if_no_tag") and tag_count(pi, e["if_no_tag"], src) > 0:
+			continue
 		_apply(e, pi, src, ctx)
 
 
-func _resolve_targets(spec: String, pi: int, src: CardInst, ctx: Dictionary) -> Array:
+## 내 필드에서 이 시리즈(tag)인 유닛 수 (except 는 빼고 센다)
+func tag_count(pi: int, tag: String, except: CardInst = null) -> int:
+	var n := 0
+	for u in players[pi].board:
+		if u != except and not u.is_dead() and u.data.get("tags", []).has(tag):
+			n += 1
+	return n
+
+
+func _resolve_targets(spec: String, pi: int, src: CardInst, ctx: Dictionary, e: Dictionary = {}) -> Array:
 	var me: PlayerState = players[pi]
 	var op: PlayerState = players[1 - pi]
 	match spec:
@@ -731,6 +757,18 @@ func _resolve_targets(spec: String, pi: int, src: CardInst, ctx: Dictionary) -> 
 		"trigger_unit":
 			var tu = ctx.get("trigger_unit", null)
 			return [] if tu == null else [tu]
+		"my_tag_units":
+			var r4: Array = []
+			for u in me.board:
+				if u != src and u.data.get("tags", []).has(str(e.get("tag", ""))):
+					r4.append(u)
+			return r4
+		"combo_units":
+			var r5: Array = []
+			for u in ctx.get("combo_units", []):
+				if me.board.has(u):
+					r5.append(u)
+			return r5
 	return []
 
 
@@ -738,16 +776,25 @@ func _apply(e: Dictionary, pi: int, src: CardInst, ctx: Dictionary) -> void:
 	var me: PlayerState = players[pi]
 	var op: PlayerState = players[1 - pi]
 	var amt := int(e.get("amount", 0))
+	if e.has("per_tag"):
+		amt *= tag_count(pi, e["per_tag"], src)
 	match e["do"]:
 		"damage":
-			for t in _resolve_targets(e.get("target", "chosen"), pi, src, ctx):
+			for t in _resolve_targets(e.get("target", "chosen"), pi, src, ctx, e):
 				_damage(t, amt, null)
 		"heal":
-			for t in _resolve_targets(e.get("target", "chosen"), pi, src, ctx):
+			for t in _resolve_targets(e.get("target", "chosen"), pi, src, ctx, e):
 				_heal(t, amt)
 		"gold":
-			me.gold = mini(MAX_GOLD, me.gold + amt)
-			_log("  %s: 골드 +%d" % [me.name, amt])
+			_gain_gold(pi, amt)
+		"mana":
+			me.mana += amt
+			_log("  %s: 이번 턴 마나 +%d" % [me.name, amt])
+		"cap_up":
+			var before := me.mana_cap
+			me.mana_cap = mini(MANA_CAP_LIMIT, me.mana_cap + amt)
+			me.max_mana = mini(me.mana_cap, me.max_mana + amt)
+			_log("  %s: 최대 마나 한도 %d → %d, 최대 마나 %d" % [me.name, before, me.mana_cap, me.max_mana])
 		"draw":
 			_draw(me, amt)
 		"armor":
@@ -757,15 +804,16 @@ func _apply(e: Dictionary, pi: int, src: CardInst, ctx: Dictionary) -> void:
 			for k in int(e.get("count", 1)):
 				_summon(pi, e["token"])
 		"buff":
-			for t in _resolve_targets(e.get("target", "chosen"), pi, src, ctx):
+			for t in _resolve_targets(e.get("target", "chosen"), pi, src, ctx, e):
 				if t is CardInst:
 					t.attack += int(e.get("atk", 0))
 					t.health += int(e.get("hp", 0))
 					t.max_health += int(e.get("hp", 0))
 					if e.has("keyword") and not t.has_kw(e["keyword"]):
 						t.keywords.append(e["keyword"])
+					game_event.emit("buff", {"obj": t, "atk": int(e.get("atk", 0)), "hp": int(e.get("hp", 0)), "keyword": str(e.get("keyword", ""))})
 		"ramp":
-			me.max_mana = mini(MAX_MANA, me.max_mana + amt)
+			me.max_mana = mini(me.mana_cap, me.max_mana + amt)
 			_log("  %s: 최대 마나 +%d" % [me.name, amt])
 		"steal_gold":
 			var s := mini(amt, op.gold)
@@ -779,7 +827,7 @@ func _apply(e: Dictionary, pi: int, src: CardInst, ctx: Dictionary) -> void:
 				op.discard.append(t)
 			op.traps.clear()
 		"destroy":
-			for t in _resolve_targets(e.get("target", "chosen"), pi, src, ctx):
+			for t in _resolve_targets(e.get("target", "chosen"), pi, src, ctx, e):
 				if t is CardInst:
 					t.destroyed = true
 		"buy_discount":
@@ -889,11 +937,137 @@ func _log(text: String) -> void:
 	logged.emit(text)
 
 
+# ─────────────────────────────── 골드 / 조합 ───────────────────────────────
+
+func _gain_gold(pi: int, amt: int, why: String = "") -> void:
+	var me: PlayerState = players[pi]
+	var before := me.gold
+	me.gold = mini(MAX_GOLD, me.gold + amt)
+	_log("  %s: 골드 +%d%s" % [me.name, amt, (" (%s)" % why) if why != "" else ""])
+	if me.gold > before:
+		game_event.emit("gold", {"player": pi, "amount": me.gold - before})
+
+
+## 조합 조건을 만족하는 유닛들 (만족하지 않으면 빈 배열)
+func combo_match(pi: int, k: Dictionary) -> Array:
+	var board: Array = players[pi].board
+	var picked: Array = []
+	for n in k["need"]:
+		var matched: Array = []
+		if n.has("all_ids"):
+			for id in n["all_ids"]:
+				var found = null
+				for u in board:
+					if u.id == id and not u.is_dead():
+						found = u
+						break
+				if found == null:
+					return []
+				matched.append(found)
+		else:
+			for u in board:
+				if not u.is_dead() and _need_ok(n, u):
+					matched.append(u)
+			if matched.size() < int(n.get("count", 1)):
+				return []
+		for u in matched:
+			if not picked.has(u):
+				picked.append(u)
+	return picked
+
+
+func _need_ok(n: Dictionary, u: CardInst) -> bool:
+	if n.has("tag"):
+		return u.data.get("tags", []).has(n["tag"])
+	if n.has("kw"):
+		return u.has_kw(n["kw"])
+	if n.has("faction"):
+		return u.data.get("faction", "") == n["faction"]
+	if n.has("any_ids"):
+		return (n["any_ids"] as Array).has(u.id)
+	return false
+
+
+## 결성된 조합 id 목록 (조합 정의 순서)
+func active_combos(pi: int) -> Array:
+	var res: Array = []
+	for k in CardDB.combos:
+		if players[pi].combos.has(k["id"]):
+			res.append(k["id"])
+	return res
+
+
+func combo_units(pi: int, cid: String) -> Array:
+	if not CardDB.combo_by_id.has(cid):
+		return []
+	return combo_match(pi, CardDB.combo_by_id[cid])
+
+
+## 필드가 바뀔 때마다 조합이 새로 결성됐는지 / 깨졌는지 확인한다.
+func _update_combos() -> void:
+	if players.size() < 2 or phase == "over":
+		return
+	for guard in 6:
+		var formed := false
+		for pi in [current, 1 - current]:
+			var p: PlayerState = players[pi]
+			for k in CardDB.combos:
+				var cid: String = k["id"]
+				var units := combo_match(pi, k)
+				if units.is_empty():
+					p.combos.erase(cid)
+				elif not p.combos.has(cid):
+					p.combos[cid] = true
+					formed = true
+					_log("  %s: 조합 결성! [%s] %s" % [p.name, k["name"], k["form_text"]])
+					game_event.emit("combo", {"player": pi, "combo": cid, "units": units})
+					_run_effects(null, "", pi, {"combo_units": units}, k["on_form"])
+		_resolve_deaths()
+		if not formed:
+			return
+
+
+func combo_error(pi: int, cid: String) -> String:
+	var e := _turn_error(pi)
+	if e != "":
+		return e
+	var p: PlayerState = players[pi]
+	if not CardDB.combo_by_id.has(cid) or not p.combos.has(cid):
+		return "조합이 결성되어 있지 않습니다"
+	if p.combo_used.has(cid):
+		return "조합 스킬은 턴당 1회입니다"
+	var sk: Dictionary = CardDB.combo_by_id[cid]["skill"]
+	if p.mana < int(sk["cost"]):
+		return "마나가 부족합니다"
+	if sk.has("target") and valid_targets(pi, sk["target"]).is_empty():
+		return "대상이 없습니다"
+	return ""
+
+
+func use_combo(pi: int, cid: String, target: Dictionary = {}) -> bool:
+	if combo_error(pi, cid) != "":
+		return false
+	var k: Dictionary = CardDB.combo_by_id[cid]
+	var sk: Dictionary = k["skill"]
+	if sk.has("target") and not target_in(valid_targets(pi, sk["target"]), target):
+		return false
+	var p: PlayerState = players[pi]
+	p.mana -= int(sk["cost"])
+	p.combo_used[cid] = true
+	var units := combo_units(pi, cid)
+	_log("%s: 조합 스킬 [%s]" % [p.name, sk["name"]])
+	game_event.emit("combo_skill", {"player": pi, "combo": cid, "units": units})
+	_run_effects(null, "", pi, {"chosen": target, "combo_units": units}, sk["effects"])
+	_after_action()
+	return true
+
+
 ## 온라인 대전용: 두 기기의 게임 상태가 같은지 비교하는 지문
 func state_hash() -> int:
 	var parts: Array = [phase, current, winner, total_turns, market, field.id if field != null else "", field_owner]
 	for p in players:
-		parts.append([p.hp, p.armor, p.mana, p.max_mana, p.gold, p.turn_count, p.deck.size(), p.discard.size(), p.exiled.size()])
+		parts.append([p.hp, p.armor, p.mana, p.max_mana, p.mana_cap, p.gold, p.turn_count, p.deck.size(), p.discard.size(), p.exiled.size()])
+		parts.append([active_combos(p.idx), p.combo_used.keys()])
 		var hand_ids: Array = []
 		for c in p.hand:
 			hand_ids.append(c.id)

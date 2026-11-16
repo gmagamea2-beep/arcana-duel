@@ -18,6 +18,7 @@ const Settings = preload("res://ui/settings.gd")
 const FocusFrame = preload("res://ui/focus_frame.gd")
 const PileView = preload("res://ui/pile_view.gd")
 const DragArrow = preload("res://ui/drag_arrow.gd")
+const Profile = preload("res://ui/profile.gd")
 
 ## 나 / 상대의 플레이어 번호 (온라인에서 내가 손님이면 1 / 0)
 var ME := 0
@@ -54,6 +55,9 @@ var field_slot: HBoxContainer
 var turn_label: Label
 var hand_area: Control
 var power_btn: Button
+## 조합 스킬 버튼 (결성된 조합마다 1개)
+var combo_box: GridContainer
+var _combo_panel: Control = null
 var end_btn: Button
 var refresh_btn: Button
 var market_box: VBoxContainer
@@ -98,6 +102,47 @@ var _drag: Dictionary = {}
 var _anim_hidden: Dictionary = {}
 ## 도움말 팁 대기열 [[key, text], ...]
 var _tips: Array = []
+
+
+## 조합 연출: 유닛들을 잇는 빛줄기 + 퍼지는 고리 + 줄을 따라 도는 불꽃
+class ComboLines extends Control:
+	var pts: PackedVector2Array = PackedVector2Array()
+	var col := Color.WHITE
+	var t := 0.0
+	var life := 1.9
+
+	func _ready() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		set_process(true)
+
+	func _process(d: float) -> void:
+		t += d
+		if t >= life:
+			queue_free()
+			return
+		queue_redraw()
+
+	func _draw() -> void:
+		var a := minf(1.0, t / 0.15) * minf(1.0, (life - t) / 0.45)
+		var glow := col
+		glow.a = 0.35 * a
+		var core := col.lerp(Color.WHITE, 0.6)
+		core.a = a
+		if pts.size() >= 2:
+			draw_polyline(pts, glow, 18.0, true)
+			draw_polyline(pts, core, 5.0, true)
+			for i in pts.size() - 1:
+				for k in 2:
+					var f := fmod(t * 1.3 + k * 0.5, 1.0)
+					var sp := pts[i].lerp(pts[i + 1], f)
+					draw_circle(sp, 9.0, Color(1, 1, 0.9, a))
+		for p in pts:
+			for k in 2:
+				var rt := fmod(t * 1.1 + k * 0.45, 1.0)
+				var rc := col
+				rc.a = a * (1.0 - rt)
+				draw_arc(p, 50.0 + rt * 70.0, 0.0, TAU, 48, rc, 6.0 * (1.0 - rt) + 1.0, true)
+			draw_circle(p, 14.0, Color(col.r, col.g, col.b, 0.8 * a))
 var _tips_queued: Dictionary = {}
 
 
@@ -193,6 +238,11 @@ func _build() -> void:
 	field_slot.alignment = BoxContainer.ALIGNMENT_CENTER
 	field_slot.custom_minimum_size = Vector2(220, 110)
 	mid.add_child(field_slot)
+	combo_box = GridContainer.new()
+	combo_box.columns = 1
+	combo_box.add_theme_constant_override("h_separation", 8)
+	combo_box.add_theme_constant_override("v_separation", 6)
+	mid.add_child(combo_box)
 
 	me_board = _board_row()
 	left_area.add_child(me_board)
@@ -204,7 +254,8 @@ func _build() -> void:
 	me_bar.add_child(me_hero_view)
 	power_btn = Button.new()
 	power_btn.custom_minimum_size = Vector2(300, 100)
-	power_btn.add_theme_font_size_override("font_size", int(21 * Art.ts()))
+	power_btn.add_theme_font_size_override("font_size", int(19 * Art.ts()))
+	power_btn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	power_btn.pressed.connect(_on_power_pressed)
 	me_bar.add_child(power_btn)
 	me_info = _label("", 24, Art.COL_TEXT, true)
@@ -567,7 +618,14 @@ func _refresh() -> void:
 	op_hero_view.queue_redraw()
 	me_hero_view.queue_redraw()
 	op_info.text = "손패 %d장\n덱 %d · 버린 더미 %d\n마나 %d/%d · 골드 %d" % [op.hand.size(), op.deck.size(), op.discard.size(), op.mana, op.max_mana, op.gold]
+	var op_combos: Array = []
+	for cid in game.active_combos(OP):
+		op_combos.append(CardDB.combo_by_id[cid]["name"])
+	if not op_combos.is_empty():
+		op_info.text += "\n조합: " + ", ".join(PackedStringArray(op_combos))
 	me_info.text = "마나  %d / %d\n골드  %d" % [me.mana, me.max_mana, me.gold]
+	if me.mana_cap > Game.MAX_MANA:
+		me_info.text += "\n마나 한도 %d" % me.mana_cap
 	deck_pile.set_state(me.deck.size())
 	discard_pile.set_state(me.discard.size(), me.discard.back().data if not me.discard.is_empty() else {})
 	_fill_traps(op_traps_box, op, false)
@@ -619,9 +677,17 @@ func _fill_traps(box: HBoxContainer, p: PlayerState, own: bool) -> void:
 
 func _fill_board(box: HBoxContainer, p: PlayerState, side: int) -> void:
 	_clear(box)
+	var combo_col := {}
+	for cid in game.active_combos(side):
+		for cu in game.combo_units(side, cid):
+			if not combo_col.has(cu.uid):
+				combo_col[cu.uid] = Color(CardDB.combo_by_id[cid]["color"])
 	for i in p.board.size():
 		var u: CardInst = p.board[i]
 		var v: CardView = CardView.new().setup(u.data, u, "board")
+		if combo_col.has(u.uid):
+			v.meta_info["combo_col"] = combo_col[u.uid]
+			v.set_process(true)
 		v.pressed.connect(_on_unit_pressed.bind(side, i))
 		v.set_meta("side", side)
 		v.set_meta("slot", i)
@@ -725,10 +791,35 @@ func _fill_market() -> void:
 
 func _update_buttons() -> void:
 	var pd: Dictionary = game.power_def(ME)
-	power_btn.text = "영웅 능력 (%d마나)\n%s\n%s" % [int(pd["cost"]), pd["name"], pd["text"]]
+	power_btn.text = "영웅 능력 · %s (%d마나)\n%s" % [pd["name"], int(pd["cost"]), pd["text"]]
 	power_btn.disabled = not _idle() or game.power_error(ME) != ""
 	end_btn.disabled = not _idle()
 	refresh_btn.disabled = not _idle() or game.refresh_error(ME) != ""
+	_fill_combo_buttons()
+
+
+func _fill_combo_buttons() -> void:
+	_clear(combo_box)
+	var ids: Array = game.active_combos(ME)
+	combo_box.columns = maxi(1, int(ceil(ids.size() / 2.0)))
+	for cid in ids:
+		var k: Dictionary = CardDB.combo_by_id[cid]
+		var sk: Dictionary = k["skill"]
+		var b := Button.new()
+		var err: String = game.combo_error(ME, cid)
+		if ids.size() == 1:
+			b.text = "조합 스킬 · %s (%d마나)\n%s" % [sk["name"], int(sk["cost"]), sk["text"]]
+			b.custom_minimum_size = Vector2(270, 104)
+			b.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		else:
+			b.text = "%s (%d마나)" % [sk["name"], int(sk["cost"])]
+			b.custom_minimum_size = Vector2(220, 50)
+		b.tooltip_text = "[%s] %s\n%s" % [k["name"], k["cond"], sk["text"]]
+		b.add_theme_font_size_override("font_size", int(17 * Art.ts()))
+		b.disabled = not _idle() or err != ""
+		Art.accent_button(b, Color(k["color"]).darkened(0.2))
+		b.pressed.connect(_on_combo_pressed.bind(cid))
+		combo_box.add_child(b)
 
 
 # ── 자세히 보기 + 행동 버튼 ──
@@ -844,6 +935,15 @@ func _keyword_help(data: Dictionary, inst) -> void:
 	for word in CardDB.TEXT_KEYWORD_DESC:
 		if tx.contains(word):
 			lines.append("[b]%s[/b]: %s" % [word, CardDB.TEXT_KEYWORD_DESC[word]])
+	if data.has("upgrade_of") and CardDB.cards.has(data["upgrade_of"]):
+		lines.append("[b]상위 호환[/b]: 일반 카드 '%s'보다 강한 레어 카드" % CardDB.cards[data["upgrade_of"]]["name"])
+	if not data.get("tags", []).is_empty():
+		lines.append("[b]시리즈[/b]: %s (같은 시리즈를 모으면 조합 결성)" % CardDB.tag_line(data))
+	var shown := 0
+	for k in CardDB.combos:
+		if shown < 3 and _card_in_combo(data, k):
+			shown += 1
+			lines.append("[color=%s][b]조합 %s[/b][/color]: %s → %s, 스킬 '%s'" % [k["color"], k["name"], k["cond"], k["form_text"], k["skill"]["name"]])
 	if lines.is_empty():
 		return
 	var r := RichTextLabel.new()
@@ -856,6 +956,23 @@ func _keyword_help(data: Dictionary, inst) -> void:
 	r.text = "\n".join(PackedStringArray(lines))
 	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	detail_actions.add_child(r)
+
+
+func _card_in_combo(data: Dictionary, k: Dictionary) -> bool:
+	if data.get("type", "") != "unit":
+		return false
+	for n in k["need"]:
+		if n.has("tag") and data.get("tags", []).has(n["tag"]):
+			return true
+		if n.has("kw") and data.get("keywords", []).has(n["kw"]):
+			return true
+		if n.has("faction") and data.get("faction", "") == n["faction"]:
+			return true
+		if n.has("all_ids") and (n["all_ids"] as Array).has(data.get("id", "")):
+			return true
+		if n.has("any_ids") and (n["any_ids"] as Array).has(data.get("id", "")):
+			return true
+	return false
 
 
 func _tips_text() -> String:
@@ -967,6 +1084,21 @@ func _on_power_pressed() -> void:
 		_begin_targeting({"type": "power"}, game.valid_targets(ME, pd["target"]), "영웅 능력의 대상을 고르세요")
 	else:
 		_do({"type": "power"})
+
+
+func _on_combo_pressed(cid: String) -> void:
+	if not _idle():
+		return
+	var err: String = game.combo_error(ME, cid)
+	if err != "":
+		_show_hint(err)
+		return
+	var sk: Dictionary = CardDB.combo_by_id[cid]["skill"]
+	if sk.has("target"):
+		sel = {}
+		_begin_targeting({"type": "combo", "combo": cid}, game.valid_targets(ME, sk["target"]), "'%s'의 대상을 고르세요" % sk["name"])
+	else:
+		_do({"type": "combo", "combo": cid})
 
 
 func _on_use_pressed() -> void:
@@ -1099,6 +1231,17 @@ func _on_game_event(kind: String, info: Dictionary) -> void:
 		"pitch":
 			var pc: CardInst = info["card"]
 			_pending_fx.append({"kind": "pitch", "player": int(info["player"]), "uid": pc.uid, "data": pc.data})
+		"buff":
+			_pending_fx.append({"kind": "buff", "key": _key_of(info["obj"]), "atk": int(info["atk"]), "hp": int(info["hp"]), "keyword": str(info.get("keyword", ""))})
+		"gold":
+			_pending_fx.append({"kind": "gold", "key": "h%d" % int(info["player"]), "amount": int(info["amount"])})
+		"combo", "combo_skill":
+			var uids: Array = []
+			for u in info["units"]:
+				uids.append(u.uid)
+			_pending_fx.append({"kind": kind, "player": int(info["player"]), "combo": str(info["combo"]), "uids": uids})
+			if kind == "combo" and int(info["player"]) == ME:
+				_queue_tip("combo", "조합이 결성됐어요! 같은 시리즈나 조건에 맞는 유닛이 모이면 효과가 터지고,\n가운데 [조합 스킬] 버튼이 생겨요. 턴마다 1번 쓸 수 있어요. (조합 유닛은 색 테두리로 빛나요)")
 
 
 func _flush_fx() -> void:
@@ -1152,6 +1295,20 @@ func _flush_fx() -> void:
 			"heal":
 				if _pos_cache.has(fx["key"]):
 					_float_text(_pos_cache[fx["key"]], "+%d" % int(fx["amount"]), Color("#4ade80"))
+			"buff":
+				if _pos_cache.has(fx["key"]):
+					var bt := ""
+					if int(fx["atk"]) != 0 or int(fx["hp"]) != 0:
+						bt = "+%d/+%d" % [int(fx["atk"]), int(fx["hp"])]
+					if fx["keyword"] != "":
+						bt += (" " if bt != "" else "") + str(CardDB.KEYWORD_NAMES.get(fx["keyword"], fx["keyword"]))
+					if bt != "":
+						_float_text(_pos_cache[fx["key"]] + Vector2(0, -30 + offset % 3 * 10), bt, Color("#86efac"))
+			"gold":
+				if _pos_cache.has(fx["key"]):
+					_float_text(_pos_cache[fx["key"]] + Vector2(90, 0), "골드 +%d" % int(fx["amount"]), Art.COL_GOLD)
+			"combo", "combo_skill":
+				_fx_combo(fx)
 			"trap":
 				_banner("함정 발동! " + fx["name"], Color("#c084fc"))
 			"reveal":
@@ -1159,6 +1316,72 @@ func _flush_fx() -> void:
 			"opbuy":
 				_show_hint("상대가 %s 구매" % fx["name"])
 		offset += 1
+
+
+func _fx_combo(fx: Dictionary) -> void:
+	var k: Dictionary = CardDB.combo_by_id.get(fx["combo"], {})
+	if k.is_empty():
+		return
+	var col := Color(k["color"])
+	var pts := PackedVector2Array()
+	for uid in fx["uids"]:
+		var key := "u%d" % int(uid)
+		if _pos_cache.has(key):
+			pts.append(_pos_cache[key] - fx_layer.global_position)
+	var lines := ComboLines.new()
+	lines.pts = pts
+	lines.col = col
+	fx_layer.add_child(lines)
+	lines.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	# 가운데 큰 알림판
+	if is_instance_valid(_combo_panel):
+		_combo_panel.queue_free()
+	var mine := int(fx["player"]) == ME
+	var skill: bool = fx["kind"] == "combo_skill"
+	var panel := PanelContainer.new()
+	var sb := Art.panel_style(Color(0.05, 0.06, 0.09, 0.92), col, 4, 18)
+	sb.content_margin_left = 34
+	sb.content_margin_right = 34
+	sb.content_margin_top = 14
+	sb.content_margin_bottom = 16
+	sb.shadow_color = Color(col.r, col.g, col.b, 0.45)
+	sb.shadow_size = 24
+	panel.add_theme_stylebox_override("panel", sb)
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 4)
+	panel.add_child(v)
+	var head := ("조합 스킬!" if skill else "조합 결성!") + ("" if mine else "  (상대)")
+	v.add_child(_label(head, 26, Art.COL_SUB if mine else Art.COL_TARGET, true))
+	var title := _label(k["skill"]["name"] if skill else k["name"], 58, col.lerp(Color.WHITE, 0.25), true)
+	title.add_theme_color_override("font_outline_color", Color.BLACK)
+	title.add_theme_constant_override("outline_size", 10)
+	v.add_child(title)
+	v.add_child(_label(k["skill"]["text"] if skill else "%s → %s" % [k["cond"], k["form_text"]], 24, Art.COL_TEXT))
+	for c in v.get_children():
+		(c as Label).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	fx_layer.add_child(panel)
+	_combo_panel = panel
+	panel.reset_size()
+	var area := left_area.get_global_rect()
+	panel.position = Vector2(area.position.x + (area.size.x - panel.size.x) / 2.0, area.position.y + area.size.y * 0.26) - fx_layer.global_position
+	panel.pivot_offset = panel.size / 2.0
+	panel.scale = Vector2(0.4, 0.4)
+	panel.modulate.a = 0.0
+	var tw := panel.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(panel, "scale", Vector2.ONE, 0.35).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.tween_property(panel, "modulate:a", 1.0, 0.15)
+	tw.chain().tween_interval(0.15 if fast else 1.3)
+	tw.chain().tween_property(panel, "modulate:a", 0.0, 0.35)
+	tw.chain().tween_callback(panel.queue_free)
+	# 조합 유닛이 통통 튀기
+	for box in [op_board, me_board]:
+		for cv in box.get_children():
+			if cv is CardView and cv.inst != null and (fx["uids"] as Array).has(cv.inst.uid):
+				var bt := cv.create_tween()
+				bt.tween_property(cv, "scale", Vector2(1.15, 1.15), 0.15).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+				bt.tween_property(cv, "scale", Vector2.ONE, 0.25)
 
 
 func _float_text(pos: Vector2, text: String, col: Color) -> void:
@@ -1323,6 +1546,12 @@ func _show_game_over() -> void:
 	var sub := _label("내 턴 %d번 · 내 체력 %d · 상대 체력 %d" % [me.turn_count, me.hp, op.hp], 24, Art.COL_SUB)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(sub)
+	if net == null and not tutorial_mode and game.winner == ME:
+		var reward := Profile.win_reward(ai_level)
+		var total := Profile.add_crystals(reward)
+		var rl := _label("마석 +%d 획득! (보유 %d)\n메인 메뉴의 [영웅 뽑기]에서 마석 %d으로 새 영웅을 뽑을 수 있어요" % [reward, total, Profile.pull_cost()], 26, Color("#67e8f9"), true)
+		rl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		v.add_child(rl)
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_theme_constant_override("separation", 20)

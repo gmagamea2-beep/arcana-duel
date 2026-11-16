@@ -6,6 +6,9 @@ const CardDB = preload("res://core/card_db.gd")
 const Battle = preload("res://ui/battle.gd")
 const Settings = preload("res://ui/settings.gd")
 const NetMatch = preload("res://net/net_match.gd")
+const HeroCard = preload("res://ui/hero_card.gd")
+const Profile = preload("res://ui/profile.gd")
+const Gacha = preload("res://ui/gacha.gd")
 
 const VERSION := "알파 v0.1"
 
@@ -17,12 +20,18 @@ var net: NetMatch = null
 var _lobby_status: Label = null
 var _lobby_code: Label = null
 var _lobby_code_box: VBoxContainer = null
-var _hero_panels := {}
+var _hero_cards := {}
+var _hero_detail: HBoxContainer = null
+var _start_btn: Button = null
+var _online_btn: Button = null
 var _level_btns: Array = []
 
 
 func _ready() -> void:
 	CardDB.load_all()
+	selected_hero = str(Settings.get_value("selected_hero", "fire"))
+	if not CardDB.heroes.has(selected_hero) or not Profile.is_owned(selected_hero):
+		selected_hero = "fire"
 	theme = Art.make_theme()
 	get_tree().set_quit_on_go_back(false)
 	_show_menu()
@@ -58,26 +67,35 @@ func _show_menu() -> void:
 	root.add_child(center)
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 20)
+	v.add_theme_constant_override("separation", 14)
 	center.add_child(v)
 
-	var title := _label("아르카나 듀얼", 88, Art.COL_TEXT, true)
+	var title := _label("아르카나 듀얼", 80, Art.COL_TEXT, true)
 	v.add_child(title)
 	var st: Dictionary = Engine.get_meta("update_status", {})
 	var build := int(st.get("current", 0))
 	v.add_child(_label("%s%s · 1:1 덱빌딩 결투" % [VERSION, (" · 빌드 %d" % build) if build > 0 else ""], 26, Art.COL_SUB))
-	v.add_child(_label("영웅을 고르세요", 30, Art.COL_TEXT, true))
+	var own := Profile.owned()
+	v.add_child(_label("영웅을 고르세요  (%d / %d명 보유 · 잠긴 영웅은 [영웅 뽑기]로 얻어요)" % [own.size(), CardDB.hero_order.size()], 26, Art.COL_TEXT, true))
 
 	var heroes := HBoxContainer.new()
 	heroes.alignment = BoxContainer.ALIGNMENT_CENTER
-	heroes.add_theme_constant_override("separation", 18)
+	heroes.add_theme_constant_override("separation", 10)
 	v.add_child(heroes)
-	_hero_panels.clear()
+	_hero_cards.clear()
 	for hid in CardDB.hero_order:
-		var p := _hero_panel(hid)
-		heroes.add_child(p)
-		_hero_panels[hid] = p
-	_update_hero_panels()
+		var hc: HeroCard = HeroCard.new().setup(hid, Vector2(132, 172), not own.has(hid))
+		hc.pressed.connect(_on_hero_card.bind(hid))
+		heroes.add_child(hc)
+		_hero_cards[hid] = hc
+	var dp := PanelContainer.new()
+	dp.custom_minimum_size = Vector2(1300, 150)
+	var dpc := CenterContainer.new()
+	dpc.add_child(dp)
+	v.add_child(dpc)
+	_hero_detail = HBoxContainer.new()
+	_hero_detail.add_theme_constant_override("separation", 24)
+	dp.add_child(_hero_detail)
 
 	var lv := HBoxContainer.new()
 	lv.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -108,28 +126,37 @@ func _show_menu() -> void:
 	row.add_child(tut)
 	var start := Button.new()
 	start.text = "게임 시작"
-	start.custom_minimum_size = Vector2(300, 76)
+	start.custom_minimum_size = Vector2(280, 76)
 	start.add_theme_font_size_override("font_size", 32)
 	Art.accent_button(start, Color("#16a34a"))
 	start.pressed.connect(_start_battle)
 	row.add_child(start)
+	_start_btn = start
 	var online := Button.new()
 	online.text = "온라인 대전"
-	online.custom_minimum_size = Vector2(260, 76)
+	online.custom_minimum_size = Vector2(240, 76)
 	online.add_theme_font_size_override("font_size", 28)
 	Art.accent_button(online, Color("#2563eb"))
 	online.pressed.connect(_show_online_lobby)
 	row.add_child(online)
+	_online_btn = online
+	var gacha := Button.new()
+	gacha.text = "영웅 뽑기\n마석 %d" % Profile.crystals()
+	gacha.custom_minimum_size = Vector2(220, 76)
+	gacha.add_theme_font_size_override("font_size", 22)
+	Art.accent_button(gacha, Color("#7c3aed"))
+	gacha.pressed.connect(_show_gacha)
+	row.add_child(gacha)
 	var rules := Button.new()
 	rules.text = "게임 방법"
-	rules.custom_minimum_size = Vector2(220, 76)
+	rules.custom_minimum_size = Vector2(200, 76)
 	rules.add_theme_font_size_override("font_size", 26)
 	rules.pressed.connect(_show_rules)
 	row.add_child(rules)
 	if not OS.has_feature("mobile") and not OS.has_feature("web"):
 		var quit := Button.new()
 		quit.text = "종료"
-		quit.custom_minimum_size = Vector2(160, 76)
+		quit.custom_minimum_size = Vector2(140, 76)
 		quit.add_theme_font_size_override("font_size", 26)
 		quit.pressed.connect(func(): get_tree().quit())
 		row.add_child(quit)
@@ -164,6 +191,7 @@ func _show_menu() -> void:
 		v.add_child(_label("처음이라면 [튜토리얼]부터 해 보세요! (5분)", 22, Art.COL_SEL, true))
 	_add_update_row(v, st)
 	v.add_child(_label("아이콘: game-icons.net (CC BY 3.0) · 글꼴: Pretendard (OFL 1.1)", 15, Color("#5b6272")))
+	_update_hero_panels()
 
 
 ## 자동 업데이트 상태 표시 (boot.gd 가 넘겨준 정보)
@@ -199,53 +227,63 @@ func _add_update_row(v: VBoxContainer, st: Dictionary) -> void:
 		v.add_child(_label(text, 18, col))
 
 
-func _hero_panel(hid: String) -> PanelContainer:
-	var hd: Dictionary = CardDB.heroes[hid]
-	var pd: Dictionary = CardDB.powers[hd["power"]]
-	var p := PanelContainer.new()
-	p.custom_minimum_size = Vector2(320, 380)
-	p.mouse_filter = Control.MOUSE_FILTER_STOP
-	p.gui_input.connect(_on_hero_input.bind(hid))
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 8)
-	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	p.add_child(v)
-	var tex := TextureRect.new()
-	tex.texture = Art.icon(hd["icon"])
-	tex.custom_minimum_size = Vector2(0, 110)
-	tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	tex.modulate = (Art.FACTION_ACCENT[hd["faction"]] as Color).lerp(Color.WHITE, 0.3)
-	tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	v.add_child(tex)
-	v.add_child(_label(hd["name"], 34, Art.COL_TEXT, true))
-	v.add_child(_label("%s · %s 진영" % [hd["title"], CardDB.FACTION_NAMES[hd["faction"]]], 19, Art.FACTION_ACCENT[hd["faction"]]))
-	var desc := _label(hd["desc"], 20, Art.COL_SUB)
-	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	v.add_child(desc)
-	var pw := _label("영웅 능력 · %s\n%s (%d마나)" % [pd["name"], pd["text"], int(pd["cost"])], 20, Art.COL_TEXT)
-	pw.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	v.add_child(pw)
-	return p
-
-
 func _update_hero_panels() -> void:
-	for hid in _hero_panels:
-		var hd: Dictionary = CardDB.heroes[hid]
-		var on: bool = hid == selected_hero
-		var border: Color = Art.FACTION_ACCENT[hd["faction"]] if on else Color("#2c313d")
-		var sb := Art.panel_style(Art.faction_color(hd["faction"]) if on else Art.COL_PANEL, border, 4 if on else 2, 16)
-		sb.content_margin_left = 16
-		sb.content_margin_right = 16
-		sb.content_margin_top = 14
-		sb.content_margin_bottom = 14
-		_hero_panels[hid].add_theme_stylebox_override("panel", sb)
+	for hid in _hero_cards:
+		_hero_cards[hid].selected = hid == selected_hero
+	if _hero_detail == null or not is_instance_valid(_hero_detail):
+		return
+	for c in _hero_detail.get_children():
+		c.queue_free()
+	var hd: Dictionary = CardDB.heroes[selected_hero]
+	var pd: Dictionary = CardDB.powers[hd["power"]]
+	var locked := not Profile.is_owned(selected_hero)
+	var left := VBoxContainer.new()
+	left.custom_minimum_size = Vector2(440, 0)
+	_hero_detail.add_child(left)
+	var nm := _label("%s · %s" % [hd["name"], hd["title"]], 32, Art.COL_TEXT, true)
+	nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	left.add_child(nm)
+	var sub := _label("%s 진영 · %s" % [CardDB.FACTION_NAMES[hd["faction"]], HeroCard.RARITY_LABEL.get(hd.get("rarity", "basic"), "")], 20, Art.FACTION_ACCENT[hd["faction"]])
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	left.add_child(sub)
+	var desc := _label(hd["desc"], 19, Art.COL_SUB)
+	desc.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	left.add_child(desc)
+	var right := VBoxContainer.new()
+	right.custom_minimum_size = Vector2(760, 0)
+	_hero_detail.add_child(right)
+	var pw := _label("영웅 능력 · %s (%d마나): %s" % [pd["name"], int(pd["cost"]), pd["text"]], 22, Art.COL_TEXT, true)
+	pw.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	pw.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	right.add_child(pw)
+	var bonus: Array = []
+	for bid in hd.get("bonus_cards", []):
+		bonus.append(CardDB.cards[bid]["name"])
+	var extra := "시작 덱: 기본 10장" + ((" + 전용 카드 '%s'" % ", ".join(PackedStringArray(bonus))) if not bonus.is_empty() else "")
+	var bl := _label(extra, 19, Art.COL_SUB)
+	bl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	right.add_child(bl)
+	if locked:
+		var lk := _label("잠긴 영웅이에요. [영웅 뽑기]에서 얻을 수 있어요. (지금은 AI 상대로만 만나요)", 20, Art.COL_SEL, true)
+		lk.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		right.add_child(lk)
+	if _start_btn != null and is_instance_valid(_start_btn):
+		_start_btn.disabled = locked
+		_online_btn.disabled = locked
 
 
-func _on_hero_input(ev: InputEvent, hid: String) -> void:
-	if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
-		selected_hero = hid
-		_update_hero_panels()
+func _on_hero_card(_v: Control, hid: String) -> void:
+	selected_hero = hid
+	if Profile.is_owned(hid):
+		Settings.set_value("selected_hero", hid)
+	_update_hero_panels()
+
+
+func _show_gacha() -> void:
+	var g := Gacha.new()
+	g.closed.connect(_show_menu)
+	_set_screen(g)
 
 
 func _on_text_scale(v: float) -> void:
@@ -286,6 +324,8 @@ func _start_tutorial() -> void:
 
 
 func _start_battle() -> void:
+	if not Profile.is_owned(selected_hero):
+		selected_hero = "fire"
 	var b := Battle.new()
 	b.my_hero = selected_hero
 	var others: Array = CardDB.hero_order.duplicate()
@@ -321,7 +361,7 @@ func _show_rules() -> void:
 	r.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	r.add_theme_font_size_override("normal_font_size", 22)
 	r.add_theme_font_size_override("bold_font_size", 24)
-	r.text = RULES_TEXT
+	r.text = RULES_TEXT + "\n" + combo_list_text()
 	v.add_child(r)
 	var close := Button.new()
 	close.text = "닫기"
@@ -351,7 +391,32 @@ const RULES_TEXT := """[b]목표[/b]
 · 필드는 전장에 1장만 있고, 새 필드가 나오면 바뀝니다.
 
 [b]붕괴[/b]
-· 내 13번째 턴부터 매 턴 영웅이 1, 2, 3… 피해를 받습니다."""
+· 내 13번째 턴부터 매 턴 영웅이 1, 2, 3… 피해를 받습니다.
+
+[b]시리즈와 조합[/b]
+· 드래곤, 군주, 늑대 같은 [color=#facc15]시리즈[/color] 카드가 있습니다 (카드 종류 줄에 표시).
+· 내 필드에 조건에 맞는 유닛이 모이면 [color=#facc15]조합[/color]이 결성됩니다. 결성될 때 효과가 1번 발동하고 (체력 증가 등),
+  결성되어 있는 동안 영웅 능력 옆에 [b]조합 스킬[/b] 버튼이 생겨 턴마다 1번 쓸 수 있습니다.
+· 조합에 든 유닛이 죽어 조건이 깨지면 조합도 풀립니다. 다시 모이면 다시 결성됩니다.
+
+[b]마나와 골드 더 얻기[/b]
+· 최대 마나 카드: 최대 마나를 올립니다. '최대 마나 한도'를 올리는 카드는 10을 넘어 15까지 키웁니다.
+· '이번 턴에만 마나' 카드는 그 턴에만 마나를 더 줍니다.
+· [b]약탈[/b] 유닛은 공격할 때마다 골드 +1. 금광 광부, 황금 군주처럼 턴마다 골드를 주는 카드도 있습니다.
+· 레어 카드 중에는 일반 카드의 [b]상위 호환[/b]이 있습니다 (같은 비용에 더 강함).
+
+[b]영웅 뽑기[/b]
+· AI 대전에서 이기면 마석을 얻습니다 (쉬움 +30, 보통 +50). 마석 100으로 새 영웅을 뽑습니다.
+· 이미 가진 영웅은 나오지 않습니다. 새 영웅은 시작 덱에 전용 카드 1장이 들어 있습니다."""
+
+
+## 게임 방법 아래에 붙는 조합 목록
+static func combo_list_text() -> String:
+	var lines: Array = ["", "[b]조합 목록[/b]"]
+	for k in CardDB.combos:
+		var sk: Dictionary = k["skill"]
+		lines.append("· [color=%s][b]%s[/b][/color] — %s → 결성: %s / 스킬 '%s'(%d마나): %s" % [k["color"], k["name"], k["cond"], k["form_text"], sk["name"], int(sk["cost"]), sk["text"]])
+	return "\n".join(PackedStringArray(lines))
 
 
 # ─────────────────────────────── 온라인 대전 로비 ───────────────────────────────
@@ -395,6 +460,8 @@ func _copy_code() -> void:
 
 func _show_online_lobby() -> void:
 	_leave_online()
+	if not Profile.is_owned(selected_hero):
+		selected_hero = "fire"
 	var root := Control.new()
 	_set_screen(root)
 	var bg := ColorRect.new()

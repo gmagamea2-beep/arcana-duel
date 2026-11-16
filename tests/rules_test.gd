@@ -4,6 +4,8 @@ extends SceneTree
 
 const Game = preload("res://core/game.gd")
 const Tutorial = preload("res://ui/tutorial.gd")
+const CardDB = preload("res://core/card_db.gd")
+const Profile = preload("res://ui/profile.gd")
 
 var fails := 0
 var checks := 0
@@ -17,6 +19,14 @@ func _initialize() -> void:
 	test_trap_vine()
 	test_collapse()
 	test_tutorial_flow()
+	test_data_valid()
+	test_hero_bonus()
+	test_dragon_combo()
+	test_combo_break_reform()
+	test_lord_cards()
+	test_mana_cards()
+	test_plunder()
+	test_gacha_pick()
 	print("규칙 테스트: %d개 검사, 실패 %d개" % [checks, fails])
 	quit(1 if fails > 0 else 0)
 
@@ -148,3 +158,123 @@ func test_tutorial_flow() -> void:
 			break
 	check(not t.active, "튜토리얼이 끝까지 진행됨 (멈춘 단계 %d)" % (t.index + 1))
 	check(g.players[1].hp == 24, "튜토리얼 공격 후 상대 체력 24 (실제 %d)" % g.players[1].hp)
+
+
+## 데이터 검사: 아이콘, 토큰, 조합 카드, 영웅 능력/전용 카드가 모두 있는지
+func test_data_valid() -> void:
+	CardDB.load_all()
+	var icons: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/icons.json"))["icons"]
+	for id in CardDB.cards:
+		var d: Dictionary = CardDB.cards[id]
+		check(icons.has(d.get("icon", "")), "아이콘 없음: %s %s" % [id, d.get("icon", "")])
+		for e in d.get("effects", []):
+			if e.has("token"):
+				check(CardDB.cards.has(e["token"]), "토큰 없음: %s" % id)
+		if d.has("upgrade_of"):
+			var base: Dictionary = CardDB.cards[d["upgrade_of"]]
+			check(int(d.get("cost", 0)) <= int(base.get("cost", 0)), "상위 호환인데 더 비쌈: %s" % id)
+			check(int(d.get("attack", 0)) >= int(base.get("attack", 0)) and int(d.get("health", 0)) >= int(base.get("health", 0)), "상위 호환인데 능력치가 낮음: %s" % id)
+	for k in CardDB.combos:
+		for n in k["need"]:
+			for id in n.get("all_ids", []) + n.get("any_ids", []):
+				check(CardDB.cards.has(id), "조합 %s 카드 없음: %s" % [k["id"], id])
+	for hid in CardDB.hero_order:
+		var hd: Dictionary = CardDB.heroes[hid]
+		check(CardDB.powers.has(hd["power"]), "영웅 능력 없음: %s" % hid)
+		check(icons.has(hd["icon"]), "영웅 아이콘 없음: %s" % hid)
+		for bid in hd.get("bonus_cards", []):
+			check(CardDB.cards.has(bid), "전용 카드 없음: %s" % hid)
+
+
+func test_hero_bonus() -> void:
+	var g := Game.new()
+	g.start("dragon", "fire", 3)
+	var has_egg := false
+	for c in g.players[0].deck + g.players[0].hand:
+		if c.id == "DR1":
+			has_egg = true
+	check(has_egg, "드라코 시작 덱에 용의 알")
+	check(g.players[0].total_cards() == 11 and g.players[1].total_cards() == 10, "전용 카드 1장 추가")
+
+
+func test_dragon_combo() -> void:
+	var g := new_game()
+	var me = g.players[0]
+	var op = g.players[1]
+	var whelp = put_unit(g, 0, "T_WHELP")
+	var golem = put_unit(g, 1, "S3")
+	var hi := put_hand(g, 0, "DR2")
+	check(g.play_card(0, hi), "새끼 화룡 내기")
+	check(op.hp == 23, "다른 드래곤이 있으면 적 영웅 2 피해 (%d)" % op.hp)
+	check(me.combos.has("dragon2"), "쌍룡 결속 결성")
+	check(whelp.attack == 3 and whelp.health == 4, "결성 효과 +1/+2 (%d/%d)" % [whelp.attack, whelp.health])
+	var mana_before: int = me.mana
+	check(g.apply_action(0, {"type": "combo", "combo": "dragon2"}), "조합 스킬 사용")
+	check(me.mana == mana_before - 3, "조합 스킬 마나 3")
+	check(golem.health == 4, "쌍룡의 숨결: 적 유닛 2 피해")
+	check(not g.use_combo(0, "dragon2"), "조합 스킬은 턴당 1번")
+	check(not g.use_combo(0, "lord2"), "결성 안 된 조합 스킬은 못 씀")
+
+
+func test_combo_break_reform() -> void:
+	var g := new_game()
+	var me = g.players[0]
+	var a = put_unit(g, 0, "T_WHELP")
+	put_unit(g, 0, "T_WHELP")
+	g._after_action()
+	check(me.combos.has("dragon2"), "드래곤 2마리면 결성")
+	a.destroyed = true
+	g._after_action()
+	check(not me.combos.has("dragon2"), "한 마리가 죽으면 조합 풀림")
+	var c = put_unit(g, 0, "T_WHELP")
+	g._after_action()
+	check(me.combos.has("dragon2") and c.health == 4, "다시 모이면 다시 결성")
+
+
+func test_lord_cards() -> void:
+	var g := new_game()
+	var me = g.players[0]
+	var op = g.players[1]
+	put_unit(g, 0, "F7")
+	var hi := put_hand(g, 0, "LD1")
+	check(g.play_card(0, hi), "몰락한 군주 내기")
+	var ld1 = me.board[1]
+	check(me.combos.has("lord2"), "군주 회합 결성")
+	check(ld1.attack == 6 and ld1.health == 7, "군주 조건 +2/+2, 결성 +2/+2 (%d/%d)" % [ld1.attack, ld1.health])
+	var hp_before: int = op.hp
+	me.mana = 10
+	var hi2 := put_hand(g, 0, "LD7")
+	check(g.play_card(0, hi2), "만왕의 군주 내기")
+	check(op.hp == hp_before - 6, "다른 군주 2명 → 적 영웅 6 피해 (%d)" % (hp_before - op.hp))
+
+
+func test_mana_cards() -> void:
+	var g := new_game()
+	var me = g.players[0]
+	var hi := put_hand(g, 0, "MN3")
+	check(g.play_card(0, hi), "비전 결정체 내기")
+	check(me.mana_cap == 11 and me.max_mana == 11, "최대 마나 한도 11 (%d/%d)" % [me.max_mana, me.mana_cap])
+	var m: int = me.mana
+	var hi2 := put_hand(g, 0, "MN1")
+	check(g.play_card(0, hi2), "마나 결정 내기")
+	check(me.mana == m + 2, "이번 턴 마나 +2")
+	g.end_turn(0)
+	g.end_turn(1)
+	check(me.max_mana == 11 and me.mana == 11, "다음 턴 마나 11까지 (%d)" % me.max_mana)
+
+
+func test_plunder() -> void:
+	var g := new_game()
+	var me = g.players[0]
+	put_unit(g, 0, "GD2")
+	var gold: int = me.gold
+	check(g.attack(0, 0, {"side": 1, "slot": -1}), "약탈자 공격")
+	check(me.gold == gold + 1, "약탈: 공격하면 골드 +1")
+
+
+func test_gacha_pick() -> void:
+	CardDB.load_all()
+	check(Profile.pick_hero(["dragon", "star"], 0.0) == "star", "뽑기: 낮은 수 → 레어")
+	check(Profile.pick_hero(["dragon", "star"], 0.99) == "dragon", "뽑기: 높은 수 → 레전더리")
+	check(Profile.pick_hero(["dragon"], 0.1) == "dragon", "뽑기: 남은 희귀도끼리")
+	check(Profile.pick_hero([], 0.5) == "", "뽑기: 후보 없음")

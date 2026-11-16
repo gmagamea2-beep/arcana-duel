@@ -1,0 +1,471 @@
+{
+ "_comment": "조합: 내 필드에 조건(need)을 만족하는 유닛이 모이면 결성되어 on_form 효과가 1번 발동하고, 결성되어 있는 동안 공동 스킬(skill)을 턴당 1번 쓸 수 있다. docs/card_format.md 참고.",
+ "combos": [
+  {
+   "id": "dragon2",
+   "name": "쌍룡 결속",
+   "color": "#f97316",
+   "need": [
+    {
+     "tag": "dragon",
+     "count": 2
+    }
+   ],
+   "cond": "드래곤 2마리",
+   "form_text": "내 드래곤 모두 +1/+2",
+   "on_form": [
+    {
+     "do": "buff",
+     "target": "combo_units",
+     "atk": 1,
+     "hp": 2
+    }
+   ],
+   "skill": {
+    "name": "쌍룡의 숨결",
+    "cost": 3,
+    "text": "모든 적 유닛에 2 피해",
+    "effects": [
+     {
+      "do": "damage",
+      "target": "all_enemy_units",
+      "amount": 2
+     }
+    ]
+   }
+  },
+  {
+   "id": "lord2",
+   "name": "군주 회합",
+   "color": "#eab308",
+   "need": [
+    {
+     "tag": "lord",
+     "count": 2
+    }
+   ],
+   "cond": "군주 2명",
+   "form_text": "내 군주 모두 +2/+2",
+   "on_form": [
+    {
+     "do": "buff",
+     "target": "combo_units",
+     "atk": 2,
+     "hp": 2
+    }
+   ],
+   "skill": {
+    "name": "왕의 칙령",
+    "cost": 1,
+    "text": "골드 +2, 카드 1장 뽑기",
+    "effects": [
+     {
+      "do": "gold",
+      "amount": 2
+     },
+     {
+      "do": "draw",
+      "amount": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "dragonlord",
+   "name": "용기사의 맹약",
+   "color": "#ef4444",
+   "need": [
+    {
+     "tag": "dragon",
+     "count": 1
+    },
+    {
+     "tag": "lord",
+     "count": 1
+    }
+   ],
+   "cond": "드래곤 + 군주",
+   "form_text": "함께한 드래곤과 군주 +1/+1",
+   "on_form": [
+    {
+     "do": "buff",
+     "target": "combo_units",
+     "atk": 1,
+     "hp": 1
+    }
+   ],
+   "skill": {
+    "name": "용왕의 포효",
+    "cost": 4,
+    "text": "적 영웅과 모든 적 유닛에 2 피해",
+    "effects": [
+     {
+      "do": "damage",
+      "target": "all_enemies",
+      "amount": 2
+     }
+    ]
+   }
+  },
+  {
+   "id": "goldpact",
+   "name": "황금 동맹",
+   "color": "#facc15",
+   "need": [
+    {
+     "all_ids": [
+      "LD5",
+      "DR7"
+     ]
+    }
+   ],
+   "cond": "황금 군주 + 황금 드래곤",
+   "form_text": "골드 +5, 둘 다 +2/+2",
+   "on_form": [
+    {
+     "do": "gold",
+     "amount": 5
+    },
+    {
+     "do": "buff",
+     "target": "combo_units",
+     "atk": 2,
+     "hp": 2
+    }
+   ],
+   "skill": {
+    "name": "황금의 축복",
+    "cost": 2,
+    "text": "골드 +2, 카드 1장 뽑기",
+    "effects": [
+     {
+      "do": "gold",
+      "amount": 2
+     },
+     {
+      "do": "draw",
+      "amount": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "hellfire",
+   "name": "지옥불 계약",
+   "color": "#dc2626",
+   "need": [
+    {
+     "all_ids": [
+      "F7",
+      "DR3"
+     ]
+    }
+   ],
+   "cond": "화염의 군주 + 화룡",
+   "form_text": "둘 다 +2/+2",
+   "on_form": [
+    {
+     "do": "buff",
+     "target": "combo_units",
+     "atk": 2,
+     "hp": 2
+    }
+   ],
+   "skill": {
+    "name": "지옥불",
+    "cost": 3,
+    "text": "적 영웅과 모든 적 유닛에 2 피해",
+    "effects": [
+     {
+      "do": "damage",
+      "target": "all_enemies",
+      "amount": 2
+     }
+    ]
+   }
+  },
+  {
+   "id": "twinvenom",
+   "name": "맹독 쌍검",
+   "color": "#a3e635",
+   "need": [
+    {
+     "any_ids": [
+      "D1",
+      "RD1"
+     ],
+     "count": 2
+    }
+   ],
+   "cond": "독칼 암살자 / 맹독 암살자 2명",
+   "form_text": "둘 다 +1/+1",
+   "on_form": [
+    {
+     "do": "buff",
+     "target": "combo_units",
+     "atk": 1,
+     "hp": 1
+    }
+   ],
+   "skill": {
+    "name": "독 바르기",
+    "cost": 1,
+    "text": "아군 유닛 하나에 독 부여",
+    "effects": [
+     {
+      "do": "buff",
+      "target": "chosen",
+      "atk": 0,
+      "hp": 0,
+      "keyword": "poison"
+     }
+    ],
+    "target": "friendly_unit"
+   }
+  },
+  {
+   "id": "spearshield",
+   "name": "창과 방패",
+   "color": "#38bdf8",
+   "need": [
+    {
+     "kw": "charge",
+     "count": 1
+    },
+    {
+     "kw": "taunt",
+     "count": 1
+    }
+   ],
+   "cond": "돌진 유닛 + 도발 유닛",
+   "form_text": "내 유닛 모두 체력 +2",
+   "on_form": [
+    {
+     "do": "buff",
+     "target": "my_units",
+     "atk": 0,
+     "hp": 2
+    }
+   ],
+   "skill": {
+    "name": "방패 돌진",
+    "cost": 2,
+    "text": "적 하나에 3 피해",
+    "effects": [
+     {
+      "do": "damage",
+      "target": "chosen",
+      "amount": 3
+     }
+    ],
+    "target": "enemy"
+   }
+  },
+  {
+   "id": "wolfpack",
+   "name": "늑대 무리",
+   "color": "#a8a29e",
+   "need": [
+    {
+     "tag": "wolf",
+     "count": 3
+    }
+   ],
+   "cond": "늑대 3마리",
+   "form_text": "내 늑대 모두 +1/+1",
+   "on_form": [
+    {
+     "do": "buff",
+     "target": "combo_units",
+     "atk": 1,
+     "hp": 1
+    }
+   ],
+   "skill": {
+    "name": "무리 사냥",
+    "cost": 2,
+    "text": "적 하나에 3 피해",
+    "effects": [
+     {
+      "do": "damage",
+      "target": "chosen",
+      "amount": 3
+     }
+    ],
+    "target": "enemy"
+   }
+  },
+  {
+   "id": "ironwall",
+   "name": "강철 진형",
+   "color": "#cbd5e1",
+   "need": [
+    {
+     "kw": "taunt",
+     "count": 3
+    }
+   ],
+   "cond": "도발 유닛 3명",
+   "form_text": "내 영웅 방어도 +5, 내 유닛 모두 체력 +1",
+   "on_form": [
+    {
+     "do": "armor",
+     "amount": 5
+    },
+    {
+     "do": "buff",
+     "target": "my_units",
+     "atk": 0,
+     "hp": 1
+    }
+   ],
+   "skill": {
+    "name": "철벽",
+    "cost": 1,
+    "text": "내 영웅 방어도 +3",
+    "effects": [
+     {
+      "do": "armor",
+      "amount": 3
+     }
+    ]
+   }
+  },
+  {
+   "id": "fireline",
+   "name": "불꽃 연계",
+   "color": "#fb923c",
+   "need": [
+    {
+     "faction": "fire",
+     "count": 3
+    }
+   ],
+   "cond": "불꽃 유닛 3명",
+   "form_text": "적 영웅에게 2 피해",
+   "on_form": [
+    {
+     "do": "damage",
+     "target": "enemy_hero",
+     "amount": 2
+    }
+   ],
+   "skill": {
+    "name": "일제 사격",
+    "cost": 2,
+    "text": "적 영웅에게 3 피해",
+    "effects": [
+     {
+      "do": "damage",
+      "target": "enemy_hero",
+      "amount": 3
+     }
+    ]
+   }
+  },
+  {
+   "id": "shadowpact",
+   "name": "그림자 계약",
+   "color": "#c084fc",
+   "need": [
+    {
+     "faction": "shadow",
+     "count": 3
+    }
+   ],
+   "cond": "그림자 유닛 3명",
+   "form_text": "상대 골드를 최대 2 빼앗음",
+   "on_form": [
+    {
+     "do": "steal_gold",
+     "amount": 2
+    }
+   ],
+   "skill": {
+    "name": "암거래",
+    "cost": 1,
+    "text": "상대 골드 1 빼앗기, 카드 1장 뽑기",
+    "effects": [
+     {
+      "do": "steal_gold",
+      "amount": 1
+     },
+     {
+      "do": "draw",
+      "amount": 1
+     }
+    ]
+   }
+  },
+  {
+   "id": "forestsong",
+   "name": "숲의 합창",
+   "color": "#4ade80",
+   "need": [
+    {
+     "faction": "forest",
+     "count": 4
+    }
+   ],
+   "cond": "숲 유닛 4명 (토큰 포함)",
+   "form_text": "최대 마나 +1",
+   "on_form": [
+    {
+     "do": "ramp",
+     "amount": 1
+    }
+   ],
+   "skill": {
+    "name": "생명의 노래",
+    "cost": 2,
+    "text": "내 영웅과 내 유닛 모두 체력 2 회복",
+    "effects": [
+     {
+      "do": "heal",
+      "target": "my_hero",
+      "amount": 2
+     },
+     {
+      "do": "heal",
+      "target": "my_units",
+      "amount": 2
+     }
+    ]
+   }
+  },
+  {
+   "id": "mercs",
+   "name": "용병단",
+   "color": "#94a3b8",
+   "need": [
+    {
+     "faction": "neutral",
+     "count": 3
+    }
+   ],
+   "cond": "중립 유닛 3명 (토큰 포함)",
+   "form_text": "골드 +3",
+   "on_form": [
+    {
+     "do": "gold",
+     "amount": 3
+    }
+   ],
+   "skill": {
+    "name": "몸값 흥정",
+    "cost": 1,
+    "text": "골드 +1, 내 영웅 방어도 +1",
+    "effects": [
+     {
+      "do": "gold",
+      "amount": 1
+     },
+     {
+      "do": "armor",
+      "amount": 1
+     }
+    ]
+   }
+  }
+ ]
+}

@@ -6,7 +6,16 @@ const Game = preload("res://core/game.gd")
 const AI = preload("res://ai/simple_ai.gd")
 const CardDB = preload("res://core/card_db.gd")
 
-const HEROES := ["fire", "steel", "shadow", "forest"]
+var combo_formed := {}
+var combo_skills := 0
+
+
+func _on_sim_event(kind: String, info: Dictionary) -> void:
+	if kind == "combo":
+		combo_formed[info["combo"]] = int(combo_formed.get(info["combo"], 0)) + 1
+	elif kind == "combo_skill":
+		combo_skills += 1
+
 
 
 func _init() -> void:
@@ -32,11 +41,14 @@ func _init() -> void:
 	var collapse_games := 0
 	var max_turns := 0
 	var t0 := Time.get_ticks_msec()
+	CardDB.load_all()
+	var HEROES: Array = CardDB.hero_order
 
 	for gi in n:
 		var g := Game.new()
-		var h0: String = HEROES[pick.randi() % 4]
-		var h1: String = HEROES[pick.randi() % 4]
+		var h0: String = HEROES[pick.randi() % HEROES.size()]
+		var h1: String = HEROES[pick.randi() % HEROES.size()]
+		g.game_event.connect(_on_sim_event)
 		g.start(h0, h1, gi + 1)
 		g.mulligan(0, [])
 		g.mulligan(1, [])
@@ -101,6 +113,9 @@ func _init() -> void:
 		var gcount: int = hero_games.get(h, 0)
 		if gcount > 0:
 			print("  %s: %.1f%% (%d판)" % [h, 100.0 * hero_wins.get(h, 0) / gcount, gcount])
+	print("조합 결성 횟수 (조합 스킬 사용 %d회):" % combo_skills)
+	for k in CardDB.combos:
+		print("  %s: %d회" % [k["name"], int(combo_formed.get(k["id"], 0))])
 	print("카드별 '구매한 쪽 승률' (구매 20회 이상):")
 	var ids: Array = bought.keys()
 	ids.sort_custom(func(a, b): return float(buyer_wins.get(a, 0)) / bought[a] > float(buyer_wins.get(b, 0)) / bought[b])

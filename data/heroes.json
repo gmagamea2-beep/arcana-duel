@@ -1,15 +1,32 @@
 {
   "heroes": [
-    {"id": "fire", "name": "이그나", "title": "잿불 마녀", "faction": "fire", "icon": "fire-silhouette", "power": "fire", "desc": "공격형. 직접 피해와 돌진으로 빠르게 몰아붙입니다."},
-    {"id": "steel", "name": "로완", "title": "철벽 기사", "faction": "steel", "icon": "visored-helm", "power": "steel", "desc": "방어형. 도발과 방어도로 버티며 회복합니다."},
-    {"id": "shadow", "name": "세라", "title": "밤의 상인", "faction": "shadow", "icon": "hood", "power": "shadow", "desc": "방해형. 함정과 독, 골드 강탈로 상대를 흔듭니다."},
-    {"id": "forest", "name": "테라", "title": "숲의 목자", "faction": "forest", "icon": "tree-branch", "power": "forest", "desc": "성장형. 토큰과 마나 가속으로 물량을 쌓습니다."}
+    {"id": "fire", "name": "이그나", "title": "잿불 마녀", "faction": "fire", "icon": "fire-silhouette", "power": "fire", "desc": "공격형. 직접 피해와 돌진으로 빠르게 몰아붙입니다.", "rarity": "basic", "starter": true},
+    {"id": "steel", "name": "로완", "title": "철벽 기사", "faction": "steel", "icon": "visored-helm", "power": "steel", "desc": "방어형. 도발과 방어도로 버티며 회복합니다.", "rarity": "basic", "starter": true},
+    {"id": "shadow", "name": "세라", "title": "밤의 상인", "faction": "shadow", "icon": "hood", "power": "shadow", "desc": "방해형. 함정과 독, 골드 강탈로 상대를 흔듭니다.", "rarity": "basic", "starter": true},
+    {"id": "forest", "name": "테라", "title": "숲의 목자", "faction": "forest", "icon": "tree-branch", "power": "forest", "desc": "성장형. 토큰과 마나 가속으로 물량을 쌓습니다.", "rarity": "basic", "starter": true},
+    {"id": "dragon", "name": "드라코", "title": "용의 기수", "faction": "fire", "rarity": "legendary", "icon": "spiked-dragon-head", "power": "dragon_call", "bonus_cards": ["DR1"], "desc": "드래곤형. 새끼 용을 불러 '쌍룡 결속' 조합을 노립니다."},
+    {"id": "queen", "name": "레오나", "title": "황금 여왕", "faction": "steel", "rarity": "legendary", "icon": "queen-crown", "power": "royal_tax", "bonus_cards": ["LD1"], "desc": "군주·골드형. 골드를 모아 강한 카드를 먼저 삽니다."},
+    {"id": "dusk", "name": "바엘", "title": "황혼의 군주", "faction": "shadow", "rarity": "legendary", "icon": "overlord-helm", "power": "dominate", "bonus_cards": ["LD2"], "desc": "군주형. 적 유닛을 깎으며 골드를 챙깁니다."},
+    {"id": "sage", "name": "미르", "title": "마나 현자", "faction": "forest", "rarity": "epic", "icon": "crystal-wand", "power": "mana_flow", "bonus_cards": ["MN1"], "desc": "마나형. 최대 마나를 키워 큰 카드를 일찍 냅니다."},
+    {"id": "blood", "name": "카인", "title": "피의 검객", "faction": "shadow", "rarity": "epic", "icon": "vampire-dracula", "power": "blood_strike", "bonus_cards": ["D1"], "desc": "흡혈형. 적을 깎고 내 체력을 회복하며 버팁니다."},
+    {"id": "star", "name": "루나", "title": "별의 사제", "faction": "steel", "rarity": "rare", "icon": "sun-priest", "power": "starlight", "bonus_cards": ["S2"], "desc": "회복형. 아군과 영웅을 치료하며 오래 싸웁니다."},
+    {"id": "merc", "name": "그롬", "title": "용병대장", "faction": "fire", "rarity": "rare", "icon": "mailed-fist", "power": "rally", "bonus_cards": ["C1"], "desc": "강화형. 매 턴 유닛을 단련해 키웁니다."},
+    {"id": "hunter", "name": "실비아", "title": "늑대 사냥꾼", "faction": "forest", "rarity": "rare", "icon": "beast-eye", "power": "howl", "bonus_cards": ["N2"], "desc": "늑대형. 늑대를 불러 '늑대 무리' 조합을 노립니다."}
   ],
   "powers": {
     "fire": {"name": "불꽃 튀기기", "cost": 2, "target": "enemy", "text": "적 하나에 1 피해", "effects": [{"do": "damage", "target": "chosen", "amount": 1}]},
     "steel": {"name": "강철 갑옷", "cost": 2, "text": "방어도 +2", "effects": [{"do": "armor", "amount": 2}]},
     "shadow": {"name": "밤의 거래", "cost": 2, "text": "카드 1장 뽑기, 골드 +1", "effects": [{"do": "draw", "amount": 1}, {"do": "gold", "amount": 1}]},
     "forest": {"name": "새싹 심기", "cost": 2, "text": "묘목(1/1) 소환", "effects": [{"do": "summon", "token": "T_SAPLING", "count": 1}]},
-    "emperor": {"name": "천공의 심판", "cost": 2, "target": "enemy", "text": "적 하나에 2 피해", "effects": [{"do": "damage", "target": "chosen", "amount": 2}]}
-  }
+    "emperor": {"name": "천공의 심판", "cost": 2, "target": "enemy", "text": "적 하나에 2 피해", "effects": [{"do": "damage", "target": "chosen", "amount": 2}]},
+    "dragon_call": {"name": "용의 부름", "cost": 3, "text": "새끼 용(2/2 드래곤) 소환", "effects": [{"do": "summon", "token": "T_WHELP", "count": 1}]},
+    "royal_tax": {"name": "왕실 세금", "cost": 2, "text": "골드 +2", "effects": [{"do": "gold", "amount": 2}]},
+    "dominate": {"name": "지배", "cost": 2, "target": "enemy_unit", "text": "적 유닛 하나에 2 피해, 골드 +1", "effects": [{"do": "damage", "target": "chosen", "amount": 2}, {"do": "gold", "amount": 1}]},
+    "mana_flow": {"name": "마나 응축", "cost": 3, "text": "최대 마나 +1", "effects": [{"do": "ramp", "amount": 1}]},
+    "blood_strike": {"name": "흡혈 일격", "cost": 2, "target": "enemy", "text": "적 하나에 1 피해, 내 영웅 체력 2 회복", "effects": [{"do": "damage", "target": "chosen", "amount": 1}, {"do": "heal", "target": "my_hero", "amount": 2}]},
+    "starlight": {"name": "별빛 축복", "cost": 2, "target": "friendly", "text": "아군 하나(영웅 포함) 체력 3 회복", "effects": [{"do": "heal", "target": "chosen", "amount": 3}]},
+    "rally": {"name": "전투 함성", "cost": 2, "target": "friendly_unit", "text": "아군 유닛 하나 +1/+1", "effects": [{"do": "buff", "target": "chosen", "atk": 1, "hp": 1}]},
+    "howl": {"name": "늑대 부르기", "cost": 3, "text": "늑대(2/2) 소환", "effects": [{"do": "summon", "token": "T_WOLF", "count": 1}]}
+  },
+  "gacha": {"cost": 100, "weights": {"rare": 55, "epic": 30, "legendary": 15}, "win_reward": [30, 50], "start_crystals": 100}
 }

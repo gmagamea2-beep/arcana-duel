@@ -1,6 +1,6 @@
 extends RefCounted
 ## 규칙 기반 AI. choose_action() 을 부를 때마다 "지금 할 행동 하나"를 돌려준다.
-## 순서: 금화 → 마무리 공격 → 카드 사용 → 영웅 능력 → 공격 → 정리 → 버리기 → 구매 → 턴 종료
+## 순서: 마무리 공격 → 카드 사용 → 영웅 능력 → 조합 스킬 → 공격 → 정리 → 버리기 → 구매 → 턴 종료
 
 const CardDB = preload("res://core/card_db.gd")
 const CardInst = preload("res://core/card_inst.gd")
@@ -22,7 +22,7 @@ func choose_action(g, pi: int) -> Dictionary:
 	if g.phase != "play" or g.current != pi:
 		return {}
 	var a: Dictionary
-	for step in [_lethal, _best_play, _power, _best_attack, _clean, _pitch, _buy, _refresh]:
+	for step in [_lethal, _best_play, _power, _combo_skill, _best_attack, _clean, _pitch, _buy, _refresh]:
 		a = step.call(g, pi)
 		if not a.is_empty():
 			return a
@@ -40,6 +40,8 @@ func unit_value(u: CardInst) -> float:
 	if u.has_kw("shield"):
 		v += 1.5
 	if u.has_kw("lifesteal"):
+		v += 1.0
+	if u.has_kw("plunder"):
 		v += 1.0
 	return v
 
@@ -116,12 +118,20 @@ func _score_card(g, pi: int, c: CardInst) -> Array:
 		"spell":
 			s = 1.0
 	var ally: bool = CardDB.FACTIONS.has(d["faction"]) and p.factions_played.has(d["faction"])
+	if d["type"] == "unit":
+		s += _combo_bonus(g, pi, c)
 	for e in d.get("effects", []):
 		if e.get("when", "") != "play":
 			continue
 		if e.has("ally") and bool(e["ally"]) != ally:
 			continue
+		if e.has("if_tag") and g.tag_count(pi, e["if_tag"]) < 1:
+			continue
+		if e.has("if_no_tag") and g.tag_count(pi, e["if_no_tag"]) > 0:
+			continue
 		var amt := int(e.get("amount", 0))
+		if e.has("per_tag"):
+			amt *= g.tag_count(pi, e["per_tag"])
 		var spec: String = e.get("target", "")
 		match e["do"]:
 			"gold":
@@ -133,7 +143,11 @@ func _score_card(g, pi: int, c: CardInst) -> Array:
 			"summon":
 				s += 3.0 * int(e.get("count", 1))
 			"ramp":
-				s += 6.0 if p.max_mana < 8 else -10.0
+				s += 6.0 if p.max_mana < mini(8, p.mana_cap) else -10.0
+			"cap_up":
+				s += 5.0 + amt * 2.0
+			"mana":
+				s += _extra_mana_value(p, c, amt)
 			"steal_gold":
 				s += 1.5 * mini(amt, op.gold) + 0.5
 			"buy_discount":
@@ -183,6 +197,10 @@ func _score_card(g, pi: int, c: CardInst) -> Array:
 						return [-1.0, {}]
 					tgt = {"side": pi, "slot": best_u}
 					s += 5.0
+				elif spec == "my_tag_units":
+					s += 1.5 * g.tag_count(pi, str(e.get("tag", "")))
+				elif spec == "self":
+					s += 1.5 * (int(e.get("atk", 0)) + int(e.get("hp", 0)))
 				else:
 					s += 1.5 * p.board.size()
 			"destroy":
@@ -195,6 +213,29 @@ func _score_card(g, pi: int, c: CardInst) -> Array:
 	if d.has("target") and tgt.is_empty():
 		return [-1.0, {}]
 	return [s, tgt]
+
+
+## 이 유닛을 내면 새 조합이 결성되는지
+func _combo_bonus(g, pi: int, c: CardInst) -> float:
+	var p: PlayerState = g.players[pi]
+	if p.board.size() >= 6:
+		return 0.0
+	var bonus := 0.0
+	p.board.append(c)
+	for k in CardDB.combos:
+		if not p.combos.has(k["id"]) and not g.combo_match(pi, k).is_empty():
+			bonus += 6.0
+	p.board.erase(c)
+	return bonus
+
+
+## 이번 턴 마나를 더 얻으면 손패에서 더 낼 수 있는지
+func _extra_mana_value(p: PlayerState, c: CardInst, amt: int) -> float:
+	var left := p.mana - c.cost()
+	for o in p.hand:
+		if o != c and o.cost() > left and o.cost() <= left + amt:
+			return 6.0
+	return -1.0
 
 
 func _best_damage_target(g, pi: int, spec: String, amt: int) -> Array:
@@ -246,15 +287,86 @@ func _power(g, pi: int) -> Dictionary:
 	if g.power_error(pi) != "":
 		return {}
 	var pd: Dictionary = g.power_def(pi)
+	if not _worth_using(g, pi, pd["effects"]):
+		return {}
 	if pd.has("target"):
-		var amt := 1
-		for e in pd["effects"]:
-			amt = int(e.get("amount", 1))
-		var r := _best_damage_target(g, pi, pd["target"], amt)
-		if r[1].is_empty():
+		var r := _pick_target(g, pi, pd["target"], pd["effects"])
+		if not r[0]:
 			return {}
 		return {"type": "power", "target": r[1]}
 	return {"type": "power"}
+
+
+# ── 3-2. 조합 스킬 ──
+
+func _combo_skill(g, pi: int) -> Dictionary:
+	for cid in g.active_combos(pi):
+		if g.combo_error(pi, cid) != "":
+			continue
+		var sk: Dictionary = CardDB.combo_by_id[cid]["skill"]
+		if not _worth_using(g, pi, sk["effects"]):
+			continue
+		if sk.has("target"):
+			var r := _pick_target(g, pi, sk["target"], sk["effects"])
+			if not r[0]:
+				continue
+			return {"type": "combo", "combo": cid, "target": r[1]}
+		return {"type": "combo", "combo": cid}
+	return {}
+
+
+## 쓸모없는 상황이면 아끼기 (최대 마나가 이미 끝, 상대 유닛이 없는 광역 피해 등)
+func _worth_using(g, pi: int, effects: Array) -> bool:
+	var p: PlayerState = g.players[pi]
+	var op: PlayerState = g.players[1 - pi]
+	for e in effects:
+		match e.get("do", ""):
+			"ramp":
+				if p.max_mana >= p.mana_cap:
+					return false
+			"damage":
+				if e.get("target", "") == "all_enemy_units" and op.board.is_empty():
+					return false
+			"heal":
+				if e.get("target", "") in ["my_units", "my_hero"]:
+					var hurt := p.hp < p.max_hp
+					for u in p.board:
+						if u.health < u.max_health:
+							hurt = true
+					if not hurt:
+						return false
+	return true
+
+
+## [고를 수 있는지, 대상] — 효과 종류에 맞게 대상을 고른다
+func _pick_target(g, pi: int, spec: String, effects: Array) -> Array:
+	var kind := ""
+	var amt := 1
+	for e in effects:
+		if e.get("target", "") == "chosen":
+			kind = e["do"]
+			amt = int(e.get("amount", 1))
+			break
+	match kind:
+		"damage":
+			var r := _best_damage_target(g, pi, spec, amt)
+			return [not r[1].is_empty(), r[1]]
+		"heal":
+			var r2 := _best_heal_target(g, pi, spec, amt)
+			return [not r2[1].is_empty(), r2[1]]
+		"buff":
+			var p: PlayerState = g.players[pi]
+			var best_u := -1
+			var best_v := -1.0
+			for i in p.board.size():
+				var v := unit_value(p.board[i])
+				if v > best_v:
+					best_v = v
+					best_u = i
+			if best_u < 0:
+				return [false, {}]
+			return [true, {"side": pi, "slot": best_u}]
+	return [false, {}]
 
 
 # ── 4. 공격 ──
@@ -341,6 +453,14 @@ func _card_buy_value(g, pi: int, id: String) -> float:
 	var v: float = RARITY_VALUE[d["rarity"]]
 	if d["faction"] == p.faction:
 		v += 0.7
+	# 같은 시리즈(드래곤, 군주 등)를 모으면 조합이 잘 생긴다
+	for t in d.get("tags", []):
+		var n := 0
+		for pile in [p.deck, p.hand, p.discard, p.board]:
+			for c in pile:
+				if c.data.get("tags", []).has(t):
+					n += 1
+		v += 0.4 * mini(n, 4)
 	if d["type"] == "field" and g.field != null and g.field_owner == pi and g.field.id == id:
 		v -= 3.0
 	return v

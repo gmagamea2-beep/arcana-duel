@@ -18,19 +18,24 @@ const FACTION_NAMES := {
 	"neutral": "중립", "starter": "기본",
 }
 const TYPE_NAMES := {"unit": "유닛", "spell": "주문", "trap": "함정", "field": "필드", "hero": "영웅"}
-const KEYWORD_NAMES := {"taunt": "도발", "charge": "돌진", "shield": "보호막", "poison": "독", "lifesteal": "흡혈"}
+const KEYWORD_NAMES := {"taunt": "도발", "charge": "돌진", "shield": "보호막", "poison": "독", "lifesteal": "흡혈", "plunder": "약탈"}
+## 시리즈 (카드의 tags)
+const TAG_NAMES := {"dragon": "드래곤", "lord": "군주", "wolf": "늑대", "knight": "기사"}
 const KEYWORD_DESC := {
 	"taunt": "적은 이 유닛부터 공격해야 합니다.",
 	"charge": "낸 턴에 바로 공격할 수 있습니다.",
 	"shield": "처음 받는 피해 1회를 무효로 합니다.",
 	"poison": "이 유닛에게 피해를 받은 유닛은 즉시 죽습니다.",
 	"lifesteal": "이 유닛이 준 피해만큼 내 영웅이 회복합니다.",
+	"plunder": "이 유닛이 공격할 때마다 골드 +1.",
 }
 const TEXT_KEYWORD_DESC := {
 	"등장": "손패에서 낼 때 발동합니다.",
 	"유언": "죽을 때 발동합니다.",
 	"동맹": "이번 턴에 같은 진영 카드를 먼저 사용했다면 추가 효과가 있습니다.",
 	"함정": "뒷면으로 놓았다가 상대 턴에 조건이 맞으면 자동으로 발동합니다.",
+	"최대 마나 한도": "보통 최대 마나는 10까지지만, 한도를 올리면 15까지 늘어납니다.",
+	"이번 턴에만 마나": "남는 마나는 턴이 끝나면 사라집니다.",
 }
 
 const _INT_KEYS := ["cost", "attack", "health", "count", "trap_slots_bonus", "min_cost", "amount", "atk", "hp", "armor"]
@@ -41,6 +46,9 @@ static var market_ids: Array = []
 static var heroes := {}
 static var hero_order: Array = []
 static var powers := {}
+static var combos: Array = []
+static var combo_by_id := {}
+static var gacha := {}
 static var _loaded := false
 
 
@@ -63,7 +71,34 @@ static func load_all() -> void:
 	powers = h["powers"]
 	for k in powers:
 		_norm(powers[k])
+	gacha = h.get("gacha", {})
+	var cb: Dictionary = _read_json("res://data/combos.json")
+	for k in cb.get("combos", []):
+		for e in k["on_form"]:
+			_norm(e)
+		_norm(k["skill"])
+		for n in k["need"]:
+			if n.has("count"):
+				n["count"] = int(n["count"])
+		combos.append(k)
+		combo_by_id[k["id"]] = k
 	_loaded = true
+
+
+## 처음부터 가진 영웅 (나머지는 뽑기로 얻음)
+static func starter_heroes() -> Array:
+	var res: Array = []
+	for hid in hero_order:
+		if heroes[hid].get("starter", false):
+			res.append(hid)
+	return res
+
+
+static func tag_line(d: Dictionary) -> String:
+	var names: Array = []
+	for t in d.get("tags", []):
+		names.append(TAG_NAMES.get(t, t))
+	return "·".join(PackedStringArray(names))
 
 
 static func get_card(id: String) -> Dictionary:

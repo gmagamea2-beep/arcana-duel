@@ -14,6 +14,8 @@ var max_hp := 25
 var armor := 0
 var mana := 0
 var max_mana := 0
+## 최대 마나 한도 (보통 10, 카드로 15까지)
+var mana_cap := 10
 var gold := 0
 
 var deck: Array = []
@@ -30,6 +32,9 @@ var cleaned := false
 var buy_discount := 0
 var factions_played := {}
 var mulligan_done := false
+## 결성된 조합 {조합 id: true}, 이번 턴에 쓴 조합 스킬
+var combos := {}
+var combo_used := {}
 
 
 func total_cards() -> int:

@@ -59,7 +59,7 @@ func set_mode(m: String) -> void:
 
 func set_highlight(h: String) -> void:
 	highlight = h
-	set_process(h != "" or data.get("rarity", "") == "ultimate")
+	set_process(h != "" or data.get("rarity", "") == "ultimate" or meta_info.has("combo_col"))
 	queue_redraw()
 
 
@@ -197,6 +197,9 @@ func rules_text() -> String:
 
 func type_line() -> String:
 	var t: String = CardDB.TYPE_NAMES.get(data.get("type", ""), "")
+	var series := CardDB.tag_line(data)
+	if series != "":
+		t += "·" + series
 	var r: String = CardDB.RARITY_NAMES.get(_rarity(), "")
 	var f: String = CardDB.FACTION_NAMES.get(data.get("faction", ""), "")
 	return "%s · %s · %s" % [t, f, r]
@@ -250,6 +253,10 @@ func _draw_board() -> void:
 	var rect := Rect2(Vector2.ZERO, size)
 	_draw_glow(rect, int(14 * k))
 	var taunt: bool = inst != null and inst.has_kw("taunt")
+	if meta_info.has("combo_col"):
+		var cc: Color = meta_info["combo_col"]
+		cc.a = 0.55 + 0.45 * sin(_t * 4.0)
+		draw_style_box(Art.panel_style(Color(0, 0, 0, 0), cc, int(5 * k), int(16 * k)), rect.grow(4 * k))
 	if taunt:
 		_frame(rect, int(7 * k), int(14 * k), Color("#cbd5e1"))
 	else:
@@ -259,9 +266,12 @@ func _draw_board() -> void:
 	# 키워드 배지
 	var tags: Array = []
 	if inst != null:
-		for kw in ["charge", "poison", "lifesteal"]:
+		for kw in ["charge", "poison", "lifesteal", "plunder"]:
 			if inst.has_kw(kw):
 				tags.append(CardDB.KEYWORD_NAMES[kw])
+		var series := CardDB.tag_line(data)
+		if series != "":
+			tags.append(series)
 		var tx: String = data.get("text", "")
 		if tx.begins_with("유언"):
 			tags.append("유언")
@@ -276,6 +286,10 @@ func _draw_board() -> void:
 	if inst != null and inst.has_kw("shield"):
 		var sb := Art.panel_style(Color(1, 0.85, 0.2, 0.12), Color("#fde047"), int(3 * k), int(18 * k))
 		draw_style_box(sb, rect.grow(-2))
+	if meta_info.has("combo_col"):
+		var ccol: Color = meta_info["combo_col"]
+		draw_style_box(Art.panel_style(ccol.darkened(0.35), ccol, int(2 * k), int(8 * k)), Rect2(4 * k, 30 * k, 44 * k, 22 * k))
+		Art.draw_text(self, "조합", Rect2(4 * k, 30 * k, 44 * k, 22 * k), int(15 * k), Color.WHITE, HORIZONTAL_ALIGNMENT_CENTER, true)
 	if inst != null and meta_info.get("show_sleep", true):
 		if inst.sleeping:
 			Art.draw_text(self, "묶임", Rect2(w - 50 * k, 30 * k, 44 * k, 22 * k), int(16 * k), Color("#86efac"), HORIZONTAL_ALIGNMENT_CENTER, true, 2)

@@ -85,8 +85,67 @@ func _run() -> void:
 	await _shot("6_result")
 	print("UI 대전 점검: 내 턴 %d번, 승자 %d, 오버레이 %s" % [my_turns, game.winner, str(battle.overlay.visible)])
 	await _run_tutorial(main)
+	await _run_combo(main)
+	await _run_gacha(main)
 	print("UI 점검 완료")
 	quit()
+
+
+## 조합 결성 연출 + 조합 스킬 버튼
+func _run_combo(main) -> void:
+	main._start_battle()
+	await _frames(10)
+	var battle = main.screen
+	battle.fast = true
+	battle._on_mull_confirm()
+	var game = battle.game
+	var guard := 0
+	while not (game.phase == "play" and game.current == 0 and not battle.busy) and guard < 3000:
+		guard += 1
+		await _frames(1)
+	battle.fast = false
+	var me = game.players[0]
+	me.mana = 10
+	me.board.clear()
+	me.board.append(game._make("T_WHELP", 0))
+	game.players[1].board.append(game._make("S3", 1))
+	me.hand.append(game._make("DR2", 0))
+	battle._refresh()
+	await _frames(5)
+	if not battle._do({"type": "play", "hand": me.hand.size() - 1}):
+		print("UI 행동 실패: 조합 카드 내기")
+	await _frames(25)
+	await _shot("13_combo")
+	var formed: bool = me.combos.has("dragon2")
+	await _frames(90)
+	battle._on_combo_pressed("dragon2")
+	await _frames(25)
+	await _shot("14_combo_skill")
+	print("UI 조합 점검: 결성 %s, 스킬 사용 %s, 버튼 %d개" % [str(formed), str(me.combo_used.has("dragon2")), battle.combo_box.get_child_count()])
+	if not formed or not me.combo_used.has("dragon2"):
+		print("UI 행동 실패: 조합")
+	await _frames(60)
+
+
+## 영웅 뽑기 화면 + 연출
+func _run_gacha(main) -> void:
+	var Profile = load("res://ui/profile.gd")
+	Profile.add_crystals(1000)
+	main._show_gacha()
+	await _frames(10)
+	var g = main.screen
+	await _shot("15_gacha_ready")
+	var before: int = Profile.owned().size()
+	g._on_pull()
+	await _frames(150)
+	await _shot("16_gacha_result")
+	var after: int = Profile.owned().size()
+	print("UI 뽑기 점검: 영웅 %d → %d명, 얻은 영웅 %s" % [before, after, g.last_pulled])
+	if after != before + 1:
+		print("UI 행동 실패: 뽑기")
+	g.closed.emit()
+	await _frames(10)
+	await _shot("17_menu_after_gacha")
 
 
 ## 튜토리얼을 화면 그대로 따라가며 끝까지 진행
