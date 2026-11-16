@@ -556,6 +556,8 @@ func _refresh(g, pi: int) -> Dictionary:
 
 func _search(g, pi: int) -> Dictionary:
 	var base := evaluate(g, pi)
+	# 규칙 AI 가 고를 행동에 약간 가산점 (점수가 비슷하면 검증된 규칙을 따른다)
+	var rule := _rule_choice(g, pi)
 	var best_d := 0.4
 	var best: Dictionary = {}
 	for a in _candidates(g, pi):
@@ -563,10 +565,36 @@ func _search(g, pi: int) -> Dictionary:
 		if not c.apply_action(pi, a):
 			continue
 		var d := evaluate(c, pi) - base
+		if not rule.is_empty() and _same_action(a, rule):
+			d += RULE_BONUS
 		if d > best_d:
 			best_d = d
 			best = a
 	return best
+
+
+const RULE_BONUS := 1.0
+
+
+func _rule_choice(g, pi: int) -> Dictionary:
+	for step in [_best_play, _power, _combo_skill, _best_attack]:
+		var a: Dictionary = step.call(g, pi)
+		if not a.is_empty():
+			return a
+	return {}
+
+
+func _same_action(a: Dictionary, b: Dictionary) -> bool:
+	if a.get("type", "") != b.get("type", ""):
+		return false
+	for k in ["hand", "unit", "combo"]:
+		if str(a.get(k, "")) != str(b.get(k, "")):
+			return false
+	var ta: Dictionary = a.get("target", {})
+	var tb: Dictionary = b.get("target", {})
+	if ta.is_empty() != tb.is_empty():
+		return false
+	return ta.is_empty() or (int(ta["side"]) == int(tb["side"]) and int(ta["slot"]) == int(tb["slot"]))
 
 
 func _candidates(g, pi: int) -> Array:
@@ -606,6 +634,7 @@ func _candidates(g, pi: int) -> Array:
 
 
 ## 상황 점수 (pi 쪽에서 볼 때 높을수록 좋음)
+## 체력·필드·손패·자원에 더해, 다음 상대 턴에 맞을 피해와 내 다음 턴 마무리 가능성을 본다.
 func evaluate(g, pi: int) -> float:
 	if g.phase == "over":
 		if g.winner == pi:
@@ -616,18 +645,34 @@ func evaluate(g, pi: int) -> float:
 	var s := 0.0
 	var my_life := me.hp + 0.8 * me.armor
 	var op_life := op.hp + 0.8 * op.armor
-	s += 1.6 * my_life - 2.0 * op_life
-	# 상대 체력이 낮을수록 영웅 피해가 더 값지다
+	s += 1.0 * my_life - 1.2 * op_life
 	if op_life < 12:
-		s += (12.0 - op_life) * 1.5
-	if my_life < 10:
-		s -= (10.0 - my_life) * 1.5
+		s += (12.0 - op_life) * 1.2
+	var my_taunt_hp := 0
+	var my_atk := 0
 	for u in me.board:
-		s += unit_value(u) * 1.1
+		s += unit_value(u) * 1.2
+		if u.has_kw("taunt"):
+			my_taunt_hp += u.health
+		if not u.frozen:
+			my_atk += u.attack
+	var op_taunt := false
+	var op_atk := 0
 	for u in op.board:
-		s -= unit_value(u) * 1.1
-	s += 0.6 * me.hand.size()
-	s += 0.6 * me.gold - 0.3 * op.gold
+		s -= unit_value(u) * 1.35
+		if u.has_kw("taunt"):
+			op_taunt = true
+		op_atk += u.attack
+	# 다음 상대 턴 위협: 내 도발 유닛이 일부를 막아 준다고 본다
+	var threat := maxf(0.0, op_atk - my_taunt_hp * 0.7)
+	s -= 0.45 * threat
+	if threat >= my_life:
+		s -= 40.0
+	# 내 다음 턴 마무리 가능성
+	if not op_taunt and my_atk >= op_life:
+		s += 12.0
+	s += 0.8 * me.hand.size()
+	s += 0.5 * me.gold - 0.25 * op.gold
 	s += 1.5 * me.max_mana + 0.8 * me.mana_cap
 	for t in me.traps:
 		s += 2.0 + t.cost()
