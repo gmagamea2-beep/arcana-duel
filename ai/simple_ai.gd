@@ -3,6 +3,7 @@ extends RefCounted
 ## 순서: 마무리 공격 → 카드 사용 → 영웅 능력 → 조합 스킬 → 공격 → 정리 → 버리기 → 구매 → 턴 종료
 
 const CardDB = preload("res://core/card_db.gd")
+const Game = preload("res://core/game.gd")
 const CardInst = preload("res://core/card_inst.gd")
 const PlayerState = preload("res://core/player_state.gd")
 
@@ -100,20 +101,39 @@ func _ready_units(p: PlayerState) -> Array:
 	return res
 
 
+## 살아 있는 적들 / 적 유닛 전부 (다인전 대비)
+func _enemy_players(g, pi: int) -> Array:
+	var res: Array = []
+	for q in g.enemies(pi):
+		res.append(g.players[q])
+	return res
+
+
+func _enemy_units(g, pi: int) -> Array:
+	var res: Array = []
+	for e in _enemy_players(g, pi):
+		res.append_array(e.board)
+	return res
+
+
 # ── 1. 마무리 공격 ──
 
 func _lethal(g, pi: int) -> Dictionary:
 	var p: PlayerState = g.players[pi]
-	var op: PlayerState = g.players[1 - pi]
-	for u in op.board:
-		if u.has_kw("taunt"):
-			return {}
 	var ready := _ready_units(p)
+	if ready.is_empty():
+		return {}
 	var total := 0
 	for i in ready:
 		total += p.board[i].attack
-	if ready.size() > 0 and total >= op.hp + op.armor:
-		return {"type": "attack", "unit": ready[0], "target": {"side": 1 - pi, "slot": -1}}
+	for q in g.enemies(pi):
+		var op: PlayerState = g.players[q]
+		var taunt := false
+		for u in op.board:
+			if u.has_kw("taunt"):
+				taunt = true
+		if not taunt and total >= op.hp + op.armor:
+			return {"type": "attack", "unit": ready[0], "target": {"side": q, "slot": -1}}
 	return {}
 
 
@@ -142,7 +162,13 @@ func _best_play(g, pi: int) -> Dictionary:
 ## [점수, 대상]
 func _score_card(g, pi: int, c: CardInst) -> Array:
 	var p: PlayerState = g.players[pi]
-	var op: PlayerState = g.players[1 - pi]
+	var ens := _enemy_players(g, pi)
+	var en_units := _enemy_units(g, pi)
+	var en_gold := 0
+	var en_traps := 0
+	for e in ens:
+		en_gold = maxi(en_gold, e.gold)
+		en_traps += e.traps.size()
 	var d := c.data
 	var s := 0.0
 	var tgt: Dictionary = {}
@@ -193,11 +219,11 @@ func _score_card(g, pi: int, c: CardInst) -> Array:
 			"mana":
 				s += _extra_mana_value(p, c, amt)
 			"steal_gold":
-				s += 1.5 * mini(amt, op.gold) + 0.5
+				s += 1.5 * mini(amt, en_gold) + 0.5
 			"buy_discount":
 				s += 1.0
 			"destroy_enemy_traps":
-				s += 2.0 * op.traps.size()
+				s += 2.0 * en_traps
 			"become_hero":
 				pass
 			"damage":
@@ -207,12 +233,12 @@ func _score_card(g, pi: int, c: CardInst) -> Array:
 					tgt = r[1]
 				elif spec == "all_enemy_units":
 					var net := -2.0
-					for u in op.board:
+					for u in en_units:
 						net += unit_value(u) if _kills(amt, u) else amt * 0.4
 					s += net
 				elif spec == "all_other_units":
 					var net2 := 0.0
-					for u in op.board:
+					for u in en_units:
 						if _kills(amt, u):
 							net2 += unit_value(u)
 					for u in p.board:
@@ -249,7 +275,7 @@ func _score_card(g, pi: int, c: CardInst) -> Array:
 					s += 1.5 * p.board.size()
 			"destroy":
 				var net3 := 0.0
-				for u in op.board:
+				for u in en_units:
 					net3 += unit_value(u)
 				for u in p.board:
 					net3 -= unit_value(u)
@@ -283,12 +309,12 @@ func _extra_mana_value(p: PlayerState, c: CardInst, amt: int) -> float:
 
 
 func _best_damage_target(g, pi: int, spec: String, amt: int) -> Array:
-	var op: PlayerState = g.players[1 - pi]
 	var best_v := -100.0
 	var best: Dictionary = {}
 	for t in g.valid_targets(pi, spec):
-		if int(t["side"]) == pi:
+		if not g.is_enemy(pi, int(t["side"])):
 			continue
+		var op: PlayerState = g.players[int(t["side"])]
 		var v := 0.0
 		if int(t["slot"]) < 0:
 			v = amt * 0.8
@@ -311,13 +337,14 @@ func _best_heal_target(g, pi: int, spec: String, amt: int) -> Array:
 	var best_v := 1.5
 	var best: Dictionary = {}
 	for t in g.valid_targets(pi, spec):
-		if int(t["side"]) != pi:
+		if g.is_enemy(pi, int(t["side"])):
 			continue
+		var fp: PlayerState = g.players[int(t["side"])]
 		var v := 0.0
 		if int(t["slot"]) < 0:
-			v = mini(amt, p.max_hp - p.hp) * 0.8
+			v = mini(amt, fp.max_hp - fp.hp) * 0.8
 		else:
-			var u: CardInst = p.board[int(t["slot"])]
+			var u: CardInst = fp.board[int(t["slot"])]
 			v = mini(amt, u.max_health - u.health) * 0.6
 		if v > best_v:
 			best_v = v
@@ -362,14 +389,14 @@ func _combo_skill(g, pi: int) -> Dictionary:
 ## 쓸모없는 상황이면 아끼기 (최대 마나가 이미 끝, 상대 유닛이 없는 광역 피해 등)
 func _worth_using(g, pi: int, effects: Array) -> bool:
 	var p: PlayerState = g.players[pi]
-	var op: PlayerState = g.players[1 - pi]
+	var en_units := _enemy_units(g, pi)
 	for e in effects:
 		match e.get("do", ""):
 			"ramp":
 				if p.max_mana >= p.mana_cap:
 					return false
 			"damage":
-				if e.get("target", "") == "all_enemy_units" and op.board.is_empty():
+				if e.get("target", "") == "all_enemy_units" and en_units.is_empty():
 					return false
 			"heal":
 				if e.get("target", "") in ["my_units", "my_hero"]:
@@ -417,7 +444,6 @@ func _pick_target(g, pi: int, spec: String, effects: Array) -> Array:
 
 func _best_attack(g, pi: int) -> Dictionary:
 	var p: PlayerState = g.players[pi]
-	var op: PlayerState = g.players[1 - pi]
 	for i in _ready_units(p):
 		var u: CardInst = p.board[i]
 		var targets: Array = g.attack_targets(pi)
@@ -425,6 +451,7 @@ func _best_attack(g, pi: int) -> Dictionary:
 		var best: Dictionary = {}
 		for t in targets:
 			var v := 0.0
+			var op: PlayerState = g.players[int(t["side"])]
 			if int(t["slot"]) < 0:
 				v = u.attack * (1.0 + (25.0 - op.hp) / 25.0)
 			else:
@@ -640,18 +667,33 @@ func _candidates(g, pi: int) -> Array:
 ## 상황 점수 (pi 쪽에서 볼 때 높을수록 좋음)
 ## 체력·필드·손패·자원에 더해, 다음 상대 턴에 맞을 피해와 내 다음 턴 마무리 가능성을 본다.
 func evaluate(g, pi: int) -> float:
-	if g.phase == "over":
-		if g.winner == pi:
-			return 100000.0
-		return -100000.0 if g.winner == 1 - pi else -50000.0
 	var me: PlayerState = g.players[pi]
-	var op: PlayerState = g.players[1 - pi]
+	if g.phase == "over":
+		if g.winner == me.team:
+			return 100000.0
+		return -50000.0 if g.winner == Game.DRAW else -100000.0
+	var ens := _enemy_players(g, pi)
 	var s := 0.0
 	var my_life := me.hp + 0.8 * me.armor
-	var op_life := op.hp + 0.8 * op.armor
+	var op_life := 0.0
+	var min_life := 999.0
+	var op_gold := 0
+	var op_combos := 0
+	for e in ens:
+		var l: float = e.hp + 0.8 * e.armor
+		op_life += l
+		min_life = minf(min_life, l)
+		op_gold = maxi(op_gold, e.gold)
+		op_combos += e.combos.size()
 	s += 1.0 * my_life - 1.2 * op_life
-	if op_life < 12:
-		s += (12.0 - op_life) * 1.2
+	if min_life < 12:
+		s += (12.0 - min_life) * 1.2
+	# 같은 편 (2:2)
+	for q in g.allies(pi):
+		var ap: PlayerState = g.players[q]
+		s += 0.6 * (ap.hp + 0.8 * ap.armor)
+		for u in ap.board:
+			s += unit_value(u) * 0.6
 	var my_taunt_hp := 0
 	var my_atk := 0
 	for u in me.board:
@@ -660,27 +702,30 @@ func evaluate(g, pi: int) -> float:
 			my_taunt_hp += u.health
 		if not u.frozen:
 			my_atk += u.attack
-	var op_taunt := false
 	var op_atk := 0
-	for u in op.board:
+	for u in _enemy_units(g, pi):
 		s -= unit_value(u) * 1.35
-		if u.has_kw("taunt"):
-			op_taunt = true
 		op_atk += u.attack
 	# 다음 상대 턴 위협: 내 도발 유닛이 일부를 막아 준다고 본다
 	var threat := maxf(0.0, op_atk - my_taunt_hp * 0.7)
 	s -= 0.45 * threat
 	if threat >= my_life:
 		s -= 40.0
-	# 내 다음 턴 마무리 가능성
-	if not op_taunt and my_atk >= op_life:
-		s += 12.0
+	# 내 다음 턴 마무리 가능성 (도발이 없는 적 중 하나라도)
+	for e in ens:
+		var taunt := false
+		for u in e.board:
+			if u.has_kw("taunt"):
+				taunt = true
+		if not taunt and my_atk >= e.hp + 0.8 * e.armor:
+			s += 12.0
+			break
 	s += 0.8 * me.hand.size()
-	s += 0.5 * me.gold - 0.25 * op.gold
+	s += 0.5 * me.gold - 0.25 * op_gold
 	s += 1.5 * me.max_mana + 0.8 * me.mana_cap
 	for t in me.traps:
 		s += 2.0 + t.cost()
 	if g.field != null:
 		s += (4.0 + g.field.cost()) * (1.0 if g.field_owner == pi else -1.0)
-	s += 3.0 * me.combos.size() - 3.0 * op.combos.size()
+	s += 3.0 * me.combos.size() - 3.0 * op_combos
 	return s

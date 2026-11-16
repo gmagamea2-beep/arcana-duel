@@ -33,7 +33,11 @@ var players: Array = []
 var current := 0
 var first := 0
 var phase := "mulligan"  # mulligan / play / over
-var winner := -1  # 0, 1, 2 = 무승부
+## 이긴 팀 번호 (1:1 이면 팀 = 자리 번호). 무승부면 DRAW
+var winner := -1
+const DRAW := 9
+## 자리별 팀 번호. 1:1 = [0, 1], 1:1:1 = [0, 1, 2], 2:2 = [0, 1, 0, 1]
+var teams: Array = [0, 1]
 var market: Array = []
 var field: CardInst = null
 var field_owner := -1
@@ -47,17 +51,24 @@ var _uid := 0
 # ─────────────────────────────── 시작 ───────────────────────────────
 
 func start(hero0: String, hero1: String, seed_value: int = -1, names: Array = ["플레이어 1", "플레이어 2"]) -> void:
+	start_multi([hero0, hero1], [0, 1], seed_value, names)
+
+
+## 여러 명 게임. heroes[i] = i번 자리 영웅, team_ids[i] = 팀 번호 (같은 번호끼리 같은 편)
+func start_multi(hero_ids: Array, team_ids: Array, seed_value: int = -1, names: Array = []) -> void:
 	CardDB.load_all()
 	if seed_value >= 0:
 		rng.seed = seed_value
 	else:
 		rng.randomize()
 	players.clear()
-	var hero_ids := [hero0, hero1]
-	for i in 2:
+	teams = team_ids.duplicate()
+	var n := hero_ids.size()
+	for i in n:
 		var p := PlayerState.new()
 		p.idx = i
-		p.name = names[i]
+		p.team = int(teams[i])
+		p.name = names[i] if i < names.size() else "플레이어 %d" % (i + 1)
 		var hd: Dictionary = CardDB.heroes[hero_ids[i]]
 		p.hero_id = hero_ids[i]
 		p.hero_name = hd["name"]
@@ -73,7 +84,7 @@ func start(hero0: String, hero1: String, seed_value: int = -1, names: Array = ["
 			p.deck.append(_make(bid, i))
 		_shuffle(p.deck)
 		players.append(p)
-	first = rng.randi_range(0, 1)
+	first = rng.randi_range(0, n - 1)
 	current = first
 	market.clear()
 	for i in MARKET_SIZE:
@@ -81,8 +92,10 @@ func start(hero0: String, hero1: String, seed_value: int = -1, names: Array = ["
 	for i in MARKET_SIZE:
 		market[i] = _roll_market_card()
 	_draw(players[first], FIRST_HAND, true)
-	_draw(players[1 - first], SECOND_HAND, true)
-	players[1 - first].gold = SECOND_GOLD
+	for pi in turn_order(first):
+		if pi != first:
+			_draw(players[pi], SECOND_HAND, true)
+			players[pi].gold = SECOND_GOLD
 	phase = "mulligan"
 	_log("게임 시작! 선공: %s" % players[first].name)
 	changed.emit()
@@ -121,7 +134,11 @@ func mulligan(pi: int, idxs: Array) -> bool:
 	p.mulligan_done = true
 	if back.size() > 0:
 		_log("%s: 시작 손패 %d장 교체" % [p.name, back.size()])
-	if players[0].mulligan_done and players[1].mulligan_done:
+	var all_done := true
+	for q in players:
+		if not q.mulligan_done:
+			all_done = false
+	if all_done:
 		phase = "play"
 		_start_turn(first)
 	changed.emit()
@@ -131,7 +148,50 @@ func mulligan(pi: int, idxs: Array) -> bool:
 # ─────────────────────────────── 조회 ───────────────────────────────
 
 func opponent(pi: int) -> PlayerState:
-	return players[1 - pi]
+	var es := enemies(pi)
+	return players[es[0]] if not es.is_empty() else players[(pi + 1) % players.size()]
+
+
+func is_multi() -> bool:
+	return players.size() > 2
+
+
+func is_enemy(a: int, b: int) -> bool:
+	return int(teams[a]) != int(teams[b])
+
+
+## from 다음 자리부터 한 바퀴 (from 포함, 맨 앞) — 죽은 자리도 포함
+func turn_order(from: int) -> Array:
+	var res: Array = []
+	for k in players.size():
+		res.append((from + k) % players.size())
+	return res
+
+
+## 살아 있는 적 자리 (pi 다음 차례부터)
+func enemies(pi: int) -> Array:
+	var res: Array = []
+	for q in turn_order(pi):
+		if q != pi and players[q].alive and is_enemy(pi, q):
+			res.append(q)
+	return res
+
+
+## 살아 있는 같은 편 (자기 자신 제외)
+func allies(pi: int) -> Array:
+	var res: Array = []
+	for q in turn_order(pi):
+		if q != pi and players[q].alive and not is_enemy(pi, q):
+			res.append(q)
+	return res
+
+
+func next_alive(pi: int) -> int:
+	for k in range(1, players.size() + 1):
+		var q := (pi + k) % players.size()
+		if players[q].alive:
+			return q
+	return pi
 
 
 func trap_slots(pi: int) -> int:
@@ -158,23 +218,32 @@ func power_def(pi: int) -> Dictionary:
 func valid_targets(pi: int, spec: String) -> Array:
 	var res: Array = []
 	var me := pi
-	var op := 1 - pi
+	var ens := enemies(pi)
+	var friends: Array = [me]
+	friends.append_array(allies(pi))
 	match spec:
 		"any":
-			res.append_array(_unit_targets(me))
-			res.append_array(_unit_targets(op))
-			res.append({"side": me, "slot": -1})
-			res.append({"side": op, "slot": -1})
+			var everyone: Array = friends + ens
+			for q in everyone:
+				res.append_array(_unit_targets(q))
+			for q in everyone:
+				res.append({"side": q, "slot": -1})
 		"enemy":
-			res.append_array(_unit_targets(op))
-			res.append({"side": op, "slot": -1})
+			for q in ens:
+				res.append_array(_unit_targets(q))
+			for q in ens:
+				res.append({"side": q, "slot": -1})
 		"enemy_unit":
-			res.append_array(_unit_targets(op))
+			for q in ens:
+				res.append_array(_unit_targets(q))
 		"friendly":
-			res.append_array(_unit_targets(me))
-			res.append({"side": me, "slot": -1})
+			for q in friends:
+				res.append_array(_unit_targets(q))
+			for q in friends:
+				res.append({"side": q, "slot": -1})
 		"friendly_unit":
-			res.append_array(_unit_targets(me))
+			for q in friends:
+				res.append_array(_unit_targets(q))
 	return res
 
 
@@ -210,16 +279,20 @@ func can_unit_attack(u: CardInst) -> bool:
 	return (not u.summoned_turn or u.has_kw("charge")) and not u.attacked and not u.sleeping and u.attack > 0
 
 
+## 공격할 수 있는 대상. 도발은 그 주인만 지켜 준다 (다인전에서 다른 적은 그대로 공격 가능).
 func attack_targets(pi: int) -> Array:
-	var op: PlayerState = players[1 - pi]
-	var taunts: Array = []
-	for i in op.board.size():
-		if op.board[i].has_kw("taunt"):
-			taunts.append({"side": 1 - pi, "slot": i})
-	if not taunts.is_empty():
-		return taunts
-	var res: Array = [{"side": 1 - pi, "slot": -1}]
-	res.append_array(_unit_targets(1 - pi))
+	var res: Array = []
+	for q in enemies(pi):
+		var op: PlayerState = players[q]
+		var taunts: Array = []
+		for i in op.board.size():
+			if op.board[i].has_kw("taunt"):
+				taunts.append({"side": q, "slot": i})
+		if not taunts.is_empty():
+			res.append_array(taunts)
+			continue
+		res.append({"side": q, "slot": -1})
+		res.append_array(_unit_targets(q))
 	return res
 
 
@@ -396,12 +469,12 @@ func play_card(pi: int, hi: int, target: Dictionary = {}) -> bool:
 			_run_effects(c, "play", pi, ctx)
 			_resolve_deaths()
 			if phase == "play" and p.board.has(c) and not c.is_dead():
-				_fire_traps(1 - pi, "enemy_unit_played", {"trigger_unit": c})
+				_fire_enemy_traps(pi, "enemy_unit_played", {"trigger_unit": c})
 		"spell":
 			_log("%s: %s 사용" % [p.name, c.display_name()])
 			game_event.emit("play", {"card": c, "player": pi})
 			var tctx := {"countered": false, "cost": c.cost()}
-			_fire_traps(1 - pi, "enemy_spell", tctx)
+			_fire_enemy_traps(pi, "enemy_spell", tctx)
 			if tctx["countered"]:
 				_log("  → %s 무효화됨!" % c.display_name())
 			else:
@@ -469,7 +542,7 @@ func buy(pi: int, mi: int) -> bool:
 	market[mi] = _roll_market_card()
 	_log("%s: %s 구매 (%d골드)" % [p.name, c.display_name(), pr])
 	game_event.emit("buy", {"card": c, "player": pi, "slot": mi})
-	_fire_traps(1 - pi, "enemy_buy", {})
+	_fire_enemy_traps(pi, "enemy_buy", {})
 	_after_action()
 	return true
 
@@ -514,10 +587,11 @@ func attack(pi: int, ui: int, target: Dictionary) -> bool:
 	var tobj: Variant = target_obj(target)
 	u.attacked = true
 	var ctx := {"trigger_unit": u, "cancel": false}
+	var defender := int(target["side"])
 	if tobj is PlayerState:
-		_fire_traps(1 - pi, "enemy_attack_hero", ctx)
+		_fire_traps(defender, "enemy_attack_hero", ctx)
 	if not u.is_dead() and not ctx["cancel"]:
-		_fire_traps(1 - pi, "enemy_attack", ctx)
+		_fire_traps(defender, "enemy_attack", ctx)
 	if u.is_dead() or ctx["cancel"]:
 		_after_action()
 		return true
@@ -553,10 +627,20 @@ func end_turn(pi: int) -> bool:
 		return true
 	p.buy_discount = 0
 	p.factions_played.clear()
-	current = 1 - pi
-	_start_turn(current)
+	_advance_turn()
 	changed.emit()
 	return true
+
+
+## 다음 살아 있는 사람에게 턴을 넘긴다 (붕괴 등으로 그 사람이 바로 탈락하면 또 넘김)
+func _advance_turn() -> void:
+	for guard in players.size() + 1:
+		if phase != "play":
+			return
+		current = next_alive(current)
+		_start_turn(current)
+		if phase != "play" or players[current].alive:
+			return
 
 
 # ─────────────────────────────── 내부 처리 ───────────────────────────────
@@ -586,7 +670,7 @@ func _start_turn(pi: int) -> void:
 		_log("  붕괴! %s 영웅이 %d 피해" % [p.name, dmg])
 		game_event.emit("damage", {"obj": p, "amount": dmg})
 		_check_win()
-		if phase == "over":
+		if phase == "over" or not p.alive:
 			return
 	if field != null and field_owner == pi:
 		_run_effects(field, "field_turn_start", pi, {})
@@ -595,7 +679,7 @@ func _start_turn(pi: int) -> void:
 	_resolve_deaths()
 	_update_combos()
 	_check_win()
-	if phase == "over":
+	if phase == "over" or not p.alive:
 		return
 	if not (pi == first and p.turn_count == 1):
 		_draw(p, maxi(1, HAND_REFILL - p.hand.size()) + p.extra_draw)
@@ -607,23 +691,49 @@ func _after_action() -> void:
 	_resolve_deaths()
 	_update_combos()
 	_check_win()
+	if phase == "play" and not players[current].alive:
+		_advance_turn()
 	changed.emit()
 
 
 func _check_win() -> void:
 	if phase == "over":
 		return
-	var d0: bool = players[0].hp <= 0
-	var d1: bool = players[1].hp <= 0
-	if not (d0 or d1):
+	var dead_now: Array = []
+	for p in players:
+		if p.alive and p.hp <= 0:
+			dead_now.append(p)
+	if dead_now.is_empty():
 		return
-	phase = "over"
-	if d0 and d1:
-		winner = 2
-		_log("무승부!")
-	else:
-		winner = 1 if d0 else 0
-		_log("%s 승리!" % players[winner].name)
+	for p in dead_now:
+		p.alive = false
+	var alive_teams := {}
+	for p in players:
+		if p.alive:
+			alive_teams[p.team] = true
+	if alive_teams.size() <= 1:
+		phase = "over"
+		if alive_teams.is_empty():
+			winner = DRAW
+			_log("무승부!")
+		else:
+			winner = int(alive_teams.keys()[0])
+			var names: Array = []
+			for p in players:
+				if p.team == winner:
+					names.append(p.name)
+			_log("%s 승리!" % ", ".join(PackedStringArray(names)))
+		return
+	# 다인전: 쓰러진 사람은 탈락. 유닛·함정은 사라지고, 가진 필드도 사라진다
+	for p in dead_now:
+		_log("%s 탈락!" % p.name)
+		p.board.clear()
+		p.traps.clear()
+		if field != null and field_owner == p.idx:
+			field = null
+			field_owner = -1
+		p.combos.clear()
+		game_event.emit("eliminated", {"player": p.idx})
 
 
 func _make(id: String, owner: int) -> CardInst:
@@ -694,6 +804,17 @@ func _roll_market_card() -> String:
 	return id
 
 
+## actor 의 적들이 차례대로 함정을 발동 (무효화·취소되면 멈춤)
+func _fire_enemy_traps(actor: int, trigger: String, ctx: Dictionary) -> void:
+	for q in enemies(actor):
+		if ctx.get("cancel", false) or ctx.get("countered", false):
+			return
+		var tu = ctx.get("trigger_unit", null)
+		if tu != null and tu.is_dead():
+			return
+		_fire_traps(q, trigger, ctx)
+
+
 func _fire_traps(owner_pi: int, trigger: String, ctx: Dictionary) -> void:
 	var o: PlayerState = players[owner_pi]
 	for t in o.traps.duplicate():
@@ -740,7 +861,9 @@ func tag_count(pi: int, tag: String, except: CardInst = null) -> int:
 
 func _resolve_targets(spec: String, pi: int, src: CardInst, ctx: Dictionary, e: Dictionary = {}) -> Array:
 	var me: PlayerState = players[pi]
-	var op: PlayerState = players[1 - pi]
+	var ens: Array = []
+	for q in enemies(pi):
+		ens.append(players[q])
 	match spec:
 		"chosen":
 			var o = target_obj(ctx.get("chosen", {}))
@@ -748,14 +871,18 @@ func _resolve_targets(spec: String, pi: int, src: CardInst, ctx: Dictionary, e: 
 		"self":
 			return [] if src == null else [src]
 		"enemy_hero":
-			return [op]
+			return ens
 		"my_hero":
 			return [me]
 		"all_enemy_units":
-			return op.board.duplicate()
+			var ru: Array = []
+			for e in ens:
+				ru.append_array(e.board)
+			return ru
 		"all_enemies":
-			var r: Array = [op]
-			r.append_array(op.board)
+			var r: Array = ens.duplicate()
+			for e in ens:
+				r.append_array(e.board)
 			return r
 		"my_units":
 			return me.board.duplicate()
@@ -764,8 +891,10 @@ func _resolve_targets(spec: String, pi: int, src: CardInst, ctx: Dictionary, e: 
 			r2.erase(src)
 			return r2
 		"all_other_units":
-			var r3: Array = me.board.duplicate()
-			r3.append_array(op.board)
+			var r3: Array = []
+			for q in turn_order(pi):
+				if players[q].alive:
+					r3.append_array(players[q].board)
 			r3.erase(src)
 			return r3
 		"trigger_unit":
@@ -788,7 +917,11 @@ func _resolve_targets(spec: String, pi: int, src: CardInst, ctx: Dictionary, e: 
 
 func _apply(e: Dictionary, pi: int, src: CardInst, ctx: Dictionary) -> void:
 	var me: PlayerState = players[pi]
-	var op: PlayerState = players[1 - pi]
+	# 골드 빼앗기 등은 가장 골드가 많은 적에게서
+	var op: PlayerState = opponent(pi)
+	for q in enemies(pi):
+		if players[q].gold > op.gold:
+			op = players[q]
 	var amt := int(e.get("amount", 0))
 	if e.has("per_tag"):
 		amt *= tag_count(pi, e["per_tag"], src)
@@ -835,11 +968,13 @@ func _apply(e: Dictionary, pi: int, src: CardInst, ctx: Dictionary) -> void:
 			me.gold = mini(MAX_GOLD, me.gold + s)
 			_log("  %s: 골드 %d 빼앗음" % [me.name, s])
 		"destroy_enemy_traps":
-			if not op.traps.is_empty():
-				_log("  %s의 함정 %d개 파괴" % [op.name, op.traps.size()])
-			for t in op.traps:
-				op.discard.append(t)
-			op.traps.clear()
+			for q in enemies(pi):
+				var ep: PlayerState = players[q]
+				if not ep.traps.is_empty():
+					_log("  %s의 함정 %d개 파괴" % [ep.name, ep.traps.size()])
+				for t in ep.traps:
+					ep.discard.append(t)
+				ep.traps.clear()
 		"destroy":
 			for t in _resolve_targets(e.get("target", "chosen"), pi, src, ctx, e):
 				if t is CardInst:
@@ -927,7 +1062,7 @@ func _summon(pi: int, token_id: String) -> void:
 func _resolve_deaths() -> void:
 	for guard in 30:
 		var dead: Array = []
-		for pi in [current, 1 - current]:
+		for pi in turn_order(current):
 			var p: PlayerState = players[pi]
 			for u in p.board.duplicate():
 				if u.is_dead():
@@ -1023,8 +1158,10 @@ func _update_combos() -> void:
 		return
 	for guard in 6:
 		var formed := false
-		for pi in [current, 1 - current]:
+		for pi in turn_order(current):
 			var p: PlayerState = players[pi]
+			if not p.alive:
+				continue
 			for k in CardDB.combos:
 				var cid: String = k["id"]
 				var units := combo_match(pi, k)
@@ -1085,6 +1222,7 @@ func clone():
 	g.first = first
 	g.phase = phase
 	g.winner = winner
+	g.teams = teams.duplicate()
 	g.market = market.duplicate()
 	g.field_owner = field_owner
 	g.unique_seen = unique_seen.duplicate()
@@ -1128,7 +1266,7 @@ static func _clone_player(p: PlayerState) -> PlayerState:
 	var n := PlayerState.new()
 	for k in ["idx", "name", "hero_id", "hero_name", "faction", "power_id", "is_emperor", "hp", "max_hp", "armor",
 			"mana", "max_mana", "mana_cap", "gold", "turn_count", "power_used", "refreshed", "cleaned",
-			"buy_discount", "mulligan_done", "extra_draw", "gold_per_turn"]:
+			"buy_discount", "mulligan_done", "extra_draw", "gold_per_turn", "team", "alive"]:
 		n.set(k, p.get(k))
 	n.factions_played = p.factions_played.duplicate()
 	n.combos = p.combos.duplicate()
@@ -1146,7 +1284,7 @@ static func _clone_player(p: PlayerState) -> PlayerState:
 func state_hash() -> int:
 	var parts: Array = [phase, current, winner, total_turns, market, field.id if field != null else "", field_owner]
 	for p in players:
-		parts.append([p.hp, p.armor, p.mana, p.max_mana, p.mana_cap, p.gold, p.turn_count, p.deck.size(), p.discard.size(), p.exiled.size()])
+		parts.append([p.hp, p.armor, p.mana, p.max_mana, p.mana_cap, p.gold, p.turn_count, p.deck.size(), p.discard.size(), p.exiled.size(), p.alive])
 		parts.append([active_combos(p.idx), p.combo_used.keys()])
 		var hand_ids: Array = []
 		for c in p.hand:

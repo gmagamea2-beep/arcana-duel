@@ -30,6 +30,9 @@ func _initialize() -> void:
 	test_clone()
 	test_handicap()
 	test_search_ai()
+	test_ffa()
+	test_teams()
+	test_multi_effects()
 	print("규칙 테스트: %d개 검사, 실패 %d개" % [checks, fails])
 	quit(1 if fails > 0 else 0)
 
@@ -330,3 +333,81 @@ func test_search_ai() -> void:
 	var hi := put_hand(g2, 0, "F3")
 	var a2: Dictionary = ai.choose_action(g2, 0)
 	check(a2.get("type", "") == "play" and int(a2.get("hand", -1)) == hi, "어려움 AI: 화염구 사용 (%s)" % str(a2))
+
+
+
+## 다인전: 바로 0번 자리 턴인 게임
+func new_multi(heroes: Array, teams: Array) -> Game:
+	var g := Game.new()
+	g.start_multi(heroes, teams, 11)
+	g.first = 0
+	g.current = 0
+	for i in heroes.size():
+		g.mulligan(i, [])
+	for p in g.players:
+		p.hand.clear()
+		p.board.clear()
+		p.traps.clear()
+	g.players[0].mana = 10
+	g.players[0].max_mana = 10
+	return g
+
+
+func test_ffa() -> void:
+	var g := new_multi(["fire", "steel", "shadow"], [0, 1, 2])
+	check(g.phase == "play" and g.current == 0, "1:1:1 시작")
+	check(g.enemies(0) == [1, 2], "1:1:1 적은 둘 (%s)" % str(g.enemies(0)))
+	put_unit(g, 1, "S1")
+	put_unit(g, 2, "C1")
+	var at: Array = g.attack_targets(0)
+	var sides := {}
+	for t in at:
+		sides[int(t["side"])] = true
+	check(sides.has(1) and sides.has(2), "두 적 모두 공격 가능")
+	check(not Game.target_in(at, {"side": 1, "slot": -1}) and Game.target_in(at, {"side": 2, "slot": -1}), "도발은 그 주인만 지킴")
+	g.players[1].hp = 0
+	g._after_action()
+	check(g.phase == "play" and not g.players[1].alive and g.players[1].board.is_empty(), "한 명 탈락해도 게임 계속, 유닛 사라짐")
+	check(g.end_turn(0) and g.current == 2, "탈락한 자리는 차례 건너뜀 (%d)" % g.current)
+	g.players[2].hp = 0
+	g._after_action()
+	check(g.phase == "over" and g.winner == 0, "마지막 생존자 승리 (승자 %d)" % g.winner)
+
+
+func test_teams() -> void:
+	var g := new_multi(["fire", "steel", "shadow", "forest"], [0, 1, 0, 1])
+	check(g.enemies(0) == [1, 3] and g.allies(0) == [2], "2:2 적·아군")
+	check(Game.target_in(g.valid_targets(0, "friendly"), {"side": 2, "slot": -1}), "아군 영웅 치료 가능")
+	check(not Game.target_in(g.attack_targets(0), {"side": 2, "slot": -1}), "아군은 공격 불가")
+	check(not Game.target_in(g.valid_targets(0, "enemy"), {"side": 2, "slot": -1}), "아군은 적 대상 아님")
+	g.players[2].hp = 0
+	g._after_action()
+	check(g.phase == "play", "같은 편 한 명이 쓰러져도 계속")
+	g.players[1].hp = 0
+	g.players[3].hp = 0
+	g._after_action()
+	check(g.phase == "over" and g.winner == 0, "상대 팀 둘 다 쓰러지면 팀 승리")
+	var g2 := new_multi(["fire", "steel", "shadow", "forest"], [0, 1, 0, 1])
+	for i in 4:
+		g2.players[i].hp = 0
+	g2._after_action()
+	check(g2.phase == "over" and g2.winner == Game.DRAW, "모두 쓰러지면 무승부")
+
+
+func test_multi_effects() -> void:
+	var g := new_multi(["fire", "steel", "shadow"], [0, 1, 2])
+	var a = put_unit(g, 1, "C1")
+	var b = put_unit(g, 2, "C1")
+	var hi := put_hand(g, 0, "F7")
+	check(g.play_card(0, hi), "화염의 군주 내기")
+	check(g.players[1].hp == 22 and g.players[2].hp == 22, "적 영웅 피해는 모든 적에게")
+	g.players[0].mana = 10
+	var hi2 := put_hand(g, 0, "F5")
+	check(g.play_card(0, hi2), "불꽃 폭풍")
+	check(a.health == 2 and b.health == 2, "모든 적 유닛 피해")
+	var c = g.clone()
+	check(c.state_hash() == g.state_hash() and c.players.size() == 3, "다인전 복사")
+	var g2 := new_multi(["fire", "steel", "shadow", "forest"], [0, 1, 0, 1])
+	var ally = put_unit(g2, 2, "C1")
+	put_hand(g2, 0, "F5")
+	check(g2.play_card(0, 0) and ally.health == 4, "아군 유닛은 광역 피해를 안 받음")

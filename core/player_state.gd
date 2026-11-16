@@ -2,6 +2,9 @@ extends RefCounted
 ## 플레이어 한 명의 상태.
 
 var idx := 0
+## 팀 번호 (같은 번호끼리 같은 편), 다인전에서 쓰러지면 alive = false (탈락)
+var team := 0
+var alive := true
 var name := ""
 var hero_id := ""
 var hero_name := ""

@@ -54,6 +54,6 @@ static func duel(la: int, lb: int, n: int, seed_base: int = 9000) -> float:
 			done += 1
 			if g.winner == a_seat:
 				wins += 1.0
-			elif g.winner == 2:
+			elif g.winner == Game.DRAW:
 				wins += 0.5
 	return wins / maxf(1.0, done)

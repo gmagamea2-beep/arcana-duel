@@ -83,7 +83,7 @@ func _init() -> void:
 		max_turns = maxi(max_turns, turns)
 		if g.total_turns >= (Game.COLLAPSE_TURN * 2 - 1):
 			collapse_games += 1
-		if g.winner == 2:
+		if g.winner == Game.DRAW:
 			draws += 1
 			continue
 		decided += 1
@@ -117,6 +117,8 @@ func _init() -> void:
 	for k in CardDB.combos:
 		print("  %s: %d회" % [k["name"], int(combo_formed.get(k["id"], 0))])
 	_compare_levels()
+	_multi_games([0, 1, 2], 60)
+	_multi_games([0, 1, 0, 1], 60)
 	print("카드별 '구매한 쪽 승률' (구매 20회 이상):")
 	var ids: Array = bought.keys()
 	ids.sort_custom(func(a, b): return float(buyer_wins.get(a, 0)) / bought[a] > float(buyer_wins.get(b, 0)) / bought[b])
@@ -161,8 +163,51 @@ func _compare_levels() -> void:
 				print("행동 실패: (난이도 점검) ", a)
 				g.apply_action(pi, {"type": "end"})
 			steps += 1
-		if g.phase == "over" and g.winner != 2:
+		if g.phase == "over" and g.winner != Game.DRAW:
 			done += 1
 			if g.winner == hard_seat:
 				hard_wins += 1
 	print("난이도 점검: 어려움 AI가 보통 AI 상대로 %d / %d판 승리 (%.0f%%), %.1f초" % [hard_wins, done, 100.0 * hard_wins / maxi(1, done), (Time.get_ticks_msec() - t0) / 1000.0])
+
+
+
+## 다인전 AI 대전: 오류 없이 끝나는지, 자리별 승률
+func _multi_games(team_ids: Array, n: int) -> void:
+	var ai := AI.new()
+	ai.rng.seed = 5
+	var wins := {}
+	var done := 0
+	var turns := 0
+	var t0 := Time.get_ticks_msec()
+	for gi in n:
+		var g := Game.new()
+		var hs: Array = []
+		for i in team_ids.size():
+			hs.append(CardDB.hero_order[(gi * 5 + i * 3) % CardDB.hero_order.size()])
+		g.start_multi(hs, team_ids, 7000 + gi)
+		for i in team_ids.size():
+			g.mulligan(i, [])
+		var steps := 0
+		var per_turn := 0
+		var last_turn := -1
+		while g.phase == "play" and steps < 30000:
+			var pi: int = g.current
+			if g.total_turns != last_turn:
+				last_turn = g.total_turns
+				per_turn = 0
+			per_turn += 1
+			var a: Dictionary = ai.choose_action(g, pi)
+			if per_turn > 150 or a.is_empty():
+				a = {"type": "end"}
+			if not g.apply_action(pi, a):
+				print("행동 실패: (다인전) ", a)
+				g.apply_action(pi, {"type": "end"})
+			steps += 1
+		if g.phase == "over":
+			done += 1
+			turns += g.total_turns
+			wins[g.winner] = int(wins.get(g.winner, 0)) + 1
+	var label := "1:1:1" if team_ids.size() == 3 else "2:2"
+	print("다인전 %s: %d / %d판 끝남, 평균 전체 턴 %.1f, 승리 팀 %s, %.1f초" % [label, done, n, float(turns) / maxi(1, done), str(wins), (Time.get_ticks_msec() - t0) / 1000.0])
+	if done < n:
+		print("행동 실패: 다인전 %s 시간 초과 %d판" % [label, n - done])
