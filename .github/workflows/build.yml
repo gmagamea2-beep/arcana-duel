@@ -71,7 +71,7 @@ jobs:
       - name: Online test (two clients via public server)
         continue-on-error: true
         run: |
-          timeout 300 ~/godot/godot --headless --path . -s res://tests/online_test.gd 2>&1 | tee online.log
+          timeout 600 ~/godot/godot --headless --path . -s res://tests/online_test.gd 2>&1 | tee online.log
           if grep -E "SCRIPT ERROR|Parse Error" online.log; then exit 1; fi
           grep "온라인 점검: 성공" online.log
 

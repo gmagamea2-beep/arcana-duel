@@ -21,6 +21,9 @@ var net: NetMatch = null
 var _lobby_status: Label = null
 var _lobby_code: Label = null
 var _lobby_code_box: VBoxContainer = null
+var _lobby_members: Label = null
+var _lobby_start: Button = null
+var _lobby_mode_btns := {}
 var _hero_cards := {}
 var _hero_detail: HBoxContainer = null
 var _start_btn: Button = null
@@ -506,6 +509,7 @@ func _new_net() -> void:
 	net.game_build = _game_build()
 	add_child(net)
 	net.status_changed.connect(_on_net_status)
+	net.lobby_changed.connect(_on_lobby_changed)
 	net.matched.connect(_start_online_battle, CONNECT_DEFERRED)
 
 
@@ -537,10 +541,25 @@ func _show_online_lobby() -> void:
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 22)
 	center.add_child(v)
-	v.add_child(_label("온라인 대전 (1:1)", 64, Art.COL_TEXT, true))
+	v.add_child(_label("온라인 대전", 64, Art.COL_TEXT, true))
+	var mr := HBoxContainer.new()
+	mr.alignment = BoxContainer.ALIGNMENT_CENTER
+	mr.add_theme_constant_override("separation", 12)
+	v.add_child(mr)
+	mr.add_child(_label("방 만들 때 대전 방식", 22, Art.COL_SUB))
+	_lobby_mode_btns.clear()
+	for pair in MODES:
+		var mb := Button.new()
+		mb.text = pair[1]
+		mb.toggle_mode = true
+		mb.custom_minimum_size = Vector2(170, 52)
+		mb.pressed.connect(_on_lobby_mode.bind(pair[0]))
+		mr.add_child(mb)
+		_lobby_mode_btns[pair[0]] = mb
+	_on_lobby_mode(mode)
 	var hd: Dictionary = CardDB.heroes[selected_hero]
 	v.add_child(_label("내 영웅: %s · %s  (메인 메뉴에서 바꿀 수 있어요)" % [hd["name"], hd["title"]], 24, Art.FACTION_ACCENT[hd["faction"]]))
-	v.add_child(_label("무료 공개 서버로 연결해요. 가끔 느리거나 끊길 수 있어요.\n두 사람 모두 같은 빌드(최신 버전)여야 해요. 한 턴 제한 시간은 90초예요.", 20, Art.COL_SUB))
+	v.add_child(_label("무료 공개 서버로 연결해요. 가끔 느리거나 끊길 수 있어요. 모두 같은 빌드(최신 버전)여야 해요.\n한 턴 제한 시간은 90초. 다인전은 빈 자리를 AI가 채우고, 중간에 나간 사람 자리도 AI가 이어서 둬요.", 20, Art.COL_SUB))
 
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -585,7 +604,21 @@ func _show_online_lobby() -> void:
 	var cc := CenterContainer.new()
 	cc.add_child(copy)
 	_lobby_code_box.add_child(cc)
-	_lobby_code_box.add_child(_label("상대에게 이 코드를 알려 주세요. 상대가 들어오면 바로 시작해요.", 22, Art.COL_TEXT))
+	_lobby_code_box.add_child(_label("친구에게 이 코드를 알려 주세요. 자리가 다 차면 바로 시작해요.", 22, Art.COL_TEXT))
+	_lobby_start = Button.new()
+	_lobby_start.text = "빈 자리는 AI로 채우고 지금 시작"
+	_lobby_start.custom_minimum_size = Vector2(0, 60)
+	_lobby_start.add_theme_font_size_override("font_size", 24)
+	Art.accent_button(_lobby_start, Color("#16a34a"))
+	_lobby_start.pressed.connect(func():
+		if net != null:
+			net.host_start())
+	var sc := CenterContainer.new()
+	sc.add_child(_lobby_start)
+	_lobby_code_box.add_child(sc)
+
+	_lobby_members = _label("", 22, Art.COL_TEXT)
+	v.add_child(_lobby_members)
 
 	_lobby_status = _label("", 24, Art.COL_SUB)
 	v.add_child(_lobby_status)
@@ -601,11 +634,36 @@ func _show_online_lobby() -> void:
 	v.add_child(bc)
 
 
+func _on_lobby_mode(m: String) -> void:
+	_on_mode(m)
+	for k in _lobby_mode_btns:
+		if is_instance_valid(_lobby_mode_btns[k]):
+			_lobby_mode_btns[k].button_pressed = k == m
+
+
+func _on_lobby_changed() -> void:
+	if net == null or _lobby_members == null or not is_instance_valid(_lobby_members):
+		return
+	var lines: Array = ["대전 방식: %s · %d / %d명" % [NetMatch.MODES[net.mode]["name"], net.members.size(), net.capacity()]]
+	for i in net.capacity():
+		if i < net.members.size():
+			var hd: Dictionary = CardDB.heroes.get(str(net.members[i]["hero"]), CardDB.heroes["fire"])
+			lines.append("%d번 자리: %s%s" % [i + 1, hd["name"], " (방장)" if i == 0 else ""])
+		else:
+			lines.append("%d번 자리: 비어 있음 (시작하면 AI)" % (i + 1))
+	if net.mode == "2v2":
+		lines.append("팀: 1·3번 자리 vs 2·4번 자리")
+	_lobby_members.text = "\n".join(PackedStringArray(lines))
+	if _lobby_start != null and is_instance_valid(_lobby_start):
+		_lobby_start.visible = net.is_host and net.mode != "1v1"
+
+
 func _on_host_pressed() -> void:
 	_new_net()
 	_lobby_code_box.visible = true
 	_lobby_code.text = "·····"
-	net.host_room(selected_hero)
+	net.host_room(selected_hero, mode)
+	_on_lobby_changed()
 
 
 func _on_join_pressed(code: String) -> void:
@@ -621,6 +679,8 @@ func _start_online_battle() -> void:
 	_lobby_status = null
 	_lobby_code = null
 	_lobby_code_box = null
+	_lobby_members = null
+	_lobby_start = null
 	var b := Battle.new()
 	b.net = net
 	b.exit_to_menu.connect(func():

@@ -41,8 +41,12 @@ var ai_level := 1
 var tutorial_mode := false
 ## 온라인 대전 연결 (NetMatch). null 이면 AI 대전
 var net = null
-var _mull_local = null
-var _mull_remote = null
+## 온라인: 자리별 시작 손패 교체, 다음에 적용할 행동 순번, 먼저 도착한 행동
+var _net_mulls := {}
+var _net_step := 0
+var _net_buf := {}
+var _net_ai_running := false
+var _net_waiting_for := -1
 var _turn_deadline := 0
 var link_label: Label
 var tutorial: Tutorial = null
@@ -156,12 +160,13 @@ var _tips_queued: Dictionary = {}
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	if net != null:
-		ME = net.my_index
-		OP = 1 - ME
+		ME = net.my_seat
+		OP = (ME + 1) % net.heroes.size()
 		net.mulligan_received.connect(_on_net_mulligan)
 		net.action_received.connect(_on_net_action)
 		net.opponent_left.connect(_on_net_left)
 		net.link_changed.connect(_on_net_link)
+		net.seat_ai_changed.connect(_on_net_seat_ai)
 	_build()
 	_start_game()
 
@@ -497,11 +502,21 @@ func _clear(node: Node) -> void:
 func _start_game() -> void:
 	game = Game.new()
 	if net != null:
-		var names := ["상대", "상대"]
-		names[ME] = "나"
+		var names: Array = []
+		var enemy_n := 0
+		var multi: bool = net.heroes.size() > 2
+		for i in net.heroes.size():
+			if i == ME:
+				names.append("나")
+			elif not multi:
+				names.append("상대")
+			elif int(net.teams[i]) == int(net.teams[ME]):
+				names.append("팀원" + (" (AI)" if net.seat_ai[i] else ""))
+			else:
+				enemy_n += 1
+				names.append("상대 %d" % enemy_n + (" (AI)" if net.seat_ai[i] else ""))
 		my_hero = net.heroes[ME]
-		op_hero = net.heroes[OP]
-		game.start(net.heroes[0], net.heroes[1], net.seed_value, names)
+		game.start_multi(net.heroes, net.teams, net.seed_value, names)
 	elif seat_heroes.size() > 2:
 		var names: Array = []
 		var enemy_n := 0
@@ -563,7 +578,8 @@ func _do(a: Dictionary) -> bool:
 	if not ok:
 		_show_hint("지금은 할 수 없는 행동입니다")
 	elif net != null:
-		net.send_action(a, game.state_hash())
+		net.send_action(_net_step, ME, a, game.state_hash())
+		_net_step += 1
 	if tutorial != null:
 		var was_active := tutorial.active
 		tutorial.after_action(a, ok)
@@ -1276,7 +1292,7 @@ func _on_end_pressed() -> void:
 	targeting = {}
 	if _do({"type": "end"}) and game.phase == "play" and game.current != ME:
 		if net != null:
-			_begin_remote_turn()
+			_net_continue()
 		else:
 			_run_ai()
 
@@ -1627,11 +1643,11 @@ func _on_mull_card(view, i: int) -> void:
 
 func _on_mull_confirm() -> void:
 	if net != null:
-		_mull_local = mull_marks.keys()
-		net.send_mulligan(_mull_local)
+		_net_mulls[ME] = _ints(mull_marks.keys())
+		net.send_mulligan(ME, _net_mulls[ME])
 		overlay.visible = false
 		_clear(overlay)
-		_show_hint("상대가 시작 손패를 고르는 중...")
+		_show_hint("다른 사람이 시작 손패를 고르는 중...")
 		_try_apply_mulligans()
 		return
 	game.mulligan(ME, mull_marks.keys())
@@ -2170,26 +2186,29 @@ func _ints(a: Array) -> Array:
 	return out
 
 
-func _on_net_mulligan(idx: Array) -> void:
-	_mull_remote = _ints(idx)
+func _on_net_mulligan(seat: int, idx: Array) -> void:
+	_net_mulls[seat] = _ints(idx)
 	_try_apply_mulligans()
 
 
-## 두 사람 시작 손패 교체를 같은 순서(방장 → 손님)로 적용해야 두 기기의 게임이 똑같이 흘러간다
+## 모두의 시작 손패 교체를 같은 순서(0번 자리부터)로 적용해야 모든 기기의 게임이 똑같이 흘러간다
 func _try_apply_mulligans() -> void:
-	if _mull_local == null or _mull_remote == null or game.phase != "mulligan":
+	if game == null or game.phase != "mulligan":
 		return
-	for pi in [0, 1]:
-		var idx: Array = _mull_local if pi == ME else _mull_remote
-		game.mulligan(pi, _ints(idx))
+	# 방장은 AI 자리 몫도 보낸다
+	if net.is_host:
+		for q in game.players.size():
+			if net.seat_ai[q] and not _net_mulls.has(q):
+				_net_mulls[q] = []
+				net.send_mulligan(q, [])
+	for q in game.players.size():
+		if not _net_mulls.has(q):
+			return
+	for q in game.players.size():
+		game.mulligan(q, _net_mulls[q])
 	_refresh()
 	_flush_fx()
-	if game.phase == "play" and game.current == ME:
-		_banner("내 턴", Art.COL_OK)
-		_start_turn_timer()
-		_on_my_turn_start()
-	else:
-		_begin_remote_turn()
+	_net_continue()
 
 
 func _start_turn_timer() -> void:
@@ -2197,37 +2216,123 @@ func _start_turn_timer() -> void:
 		_turn_deadline = Time.get_ticks_msec() + TURN_TIME * 1000
 
 
-func _begin_remote_turn() -> void:
-	busy = true
-	_turn_deadline = 0
-	_refresh()
-	_banner("상대 턴", Art.COL_TARGET)
-	_update_coach()
-
-
-func _on_net_action(a: Dictionary, state_hash: int) -> void:
-	if game == null or game.phase != "play" or _over_shown:
-		return
-	if game.current != OP:
-		_desync("상대 차례가 아닌데 행동이 왔어요")
-		return
-	_snapshot_positions()
-	var ok := game.apply_action(OP, a)
-	if not ok or (state_hash != 0 and game.state_hash() != state_hash):
-		_desync("상대의 행동을 적용한 결과가 달라요")
-		return
-	_refresh()
-	_flush_fx()
+## 온라인: 지금 차례인 사람에 맞게 진행 (내 차례 / 방장이 맡은 AI 차례 / 다른 사람 기다리기)
+func _net_continue() -> void:
 	if game.phase == "over":
 		busy = false
 		_check_over()
-	elif game.current == ME:
-		busy = false
+		return
+	if game.phase != "play" or _over_shown:
+		return
+	var seat: int = game.current
+	if seat == ME:
+		if busy or _turn_deadline == 0:
+			busy = false
+			if game.is_multi():
+				_focus_enemy()
+			_refresh()
+			_banner("내 턴", Art.COL_OK)
+			_start_turn_timer()
+			_on_my_turn_start()
+			_update_coach()
+		return
+	_turn_deadline = 0
+	busy = true
+	if game.is_multi():
+		_set_focus(seat)
+	if net.is_host and net.seat_ai[seat]:
+		if not _net_ai_running:
+			_run_net_ai(seat)
+		return
+	if _net_waiting_for != seat:
+		_net_waiting_for = seat
+		var ally := not game.is_enemy(ME, seat)
+		_banner("%s의 턴" % game.players[seat].name if game.is_multi() else "상대 턴", Art.COL_OK.lerp(Color.WHITE, 0.3) if ally else Art.COL_TARGET)
+	_refresh()
+	_update_coach()
+
+
+## 방장: AI 자리 차례를 두고 행동을 보낸다
+func _run_net_ai(seat: int) -> void:
+	_net_ai_running = true
+	_net_waiting_for = seat
+	var ally := not game.is_enemy(ME, seat)
+	_banner("%s의 턴" % game.players[seat].name if game.is_multi() else "상대 턴", Art.COL_OK.lerp(Color.WHITE, 0.3) if ally else Art.COL_TARGET)
+	await _wait(0.9)
+	var brain = ai_ally
+	var guard := 0
+	while is_inside_tree() and not _over_shown and game.phase == "play" and game.current == seat and guard < 200:
+		guard += 1
+		var a: Dictionary = brain.choose_action(game, seat)
+		if a.is_empty():
+			a = {"type": "end"}
+		_snapshot_positions()
+		if not game.apply_action(seat, a):
+			a = {"type": "end"}
+			game.apply_action(seat, a)
+		net.send_action(_net_step, seat, a, game.state_hash())
+		_net_step += 1
 		_refresh()
-		_banner("내 턴", Art.COL_OK)
-		_start_turn_timer()
-		_on_my_turn_start()
-		_update_coach()
+		_flush_fx()
+		if a["type"] == "end":
+			break
+		await _wait(AI_DELAY if a["type"] in ["play", "attack", "power", "buy", "combo"] else 0.3)
+	_net_ai_running = false
+	_net_waiting_for = -1
+	if is_inside_tree():
+		_net_continue()
+
+
+func _on_net_action(step: int, seat: int, a: Dictionary, state_hash: int) -> void:
+	if game == null or _over_shown:
+		return
+	if step >= _net_step:
+		_net_buf[step] = [seat, a, state_hash]
+	_drain_net()
+
+
+## 받은 행동을 순번대로 적용
+func _drain_net() -> void:
+	if game.phase == "mulligan":
+		return
+	var applied := false
+	while _net_buf.has(_net_step) and not _over_shown:
+		var item: Array = _net_buf[_net_step]
+		_net_buf.erase(_net_step)
+		var seat: int = item[0]
+		if game.phase != "play" or game.current != seat:
+			_desync("%s의 차례가 아닌데 행동이 왔어요" % game.players[seat].name)
+			return
+		_snapshot_positions()
+		var ok: bool = game.apply_action(seat, item[1])
+		if not ok or (int(item[2]) != 0 and game.state_hash() != int(item[2])):
+			_desync("다른 기기의 행동을 적용한 결과가 달라요")
+			return
+		_net_step += 1
+		applied = true
+		_refresh()
+		_flush_fx()
+	if applied:
+		_net_continue()
+
+
+## 다인전: 나간 사람 자리를 방장 AI가 맡음
+func _on_net_seat_ai(seat: int) -> void:
+	if game == null:
+		return
+	var p: PlayerState = game.players[seat]
+	_show_hint("%s이(가) 나가서 AI가 대신 둬요" % p.name)
+	if not p.name.ends_with("(AI)"):
+		p.name += " (AI)"
+	if net.is_host:
+		if game.phase == "mulligan":
+			if not _net_mulls.has(seat):
+				_net_mulls[seat] = []
+				net.send_mulligan(seat, [])
+			_try_apply_mulligans()
+		elif game.current == seat:
+			_net_continue()
+	_refresh()
 
 
 func _on_net_left(reason: String) -> void:
@@ -2236,11 +2341,17 @@ func _on_net_left(reason: String) -> void:
 	_over_shown = true
 	busy = true
 	var v := _modal()
-	var text := "상대가 게임을 나갔어요" if reason == "left" else "상대와 연결이 끊겼어요"
+	var text := "상대가 게임을 나갔어요"
+	var sub_text := "이번 판은 내 승리로 처리돼요"
+	if reason.begins_with("host_"):
+		text = "방장과 연결이 끊겼어요" if reason.ends_with("timeout") else "방장이 게임을 나갔어요"
+		sub_text = "방장 기기가 게임을 진행하기 때문에 이번 판은 여기서 끝나요"
+	elif reason != "left":
+		text = "상대와 연결이 끊겼어요"
 	var title := _label(text, 56, Art.COL_SEL, true)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(title)
-	var sub := _label("이번 판은 내 승리로 처리돼요", 26, Art.COL_SUB)
+	var sub := _label(sub_text, 26, Art.COL_SUB)
 	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(sub)
 	_menu_button(v)
