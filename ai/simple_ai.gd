@@ -11,6 +11,7 @@ const RARITY_VALUE := {"common": 1.0, "rare": 2.0, "epic": 3.0, "legendary": 4.5
 
 ## 난이도. 0 쉬움(가끔 실수), 1 보통(규칙대로), 2 이상은 행동을 하나씩 미리 해 보고 가장 좋은 수를 고른다.
 ## 3 이상은 AI 쪽에 보너스(체력, 매 턴 골드·카드, 시작 마나)가 붙는다.
+## (AI끼리 대결, 보너스 없이: 어려움 vs 보통 120판 68%, 보통 vs 쉬움 57% — tests/ai_duel.gd)
 const DIFFICULTIES := [
 	{"name": "쉬움", "reward": 30},
 	{"name": "보통", "reward": 50},

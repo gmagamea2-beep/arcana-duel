@@ -52,6 +52,12 @@ GitHub의 **Releases**에서 최신 `알파 빌드`를 받으세요.
 카드는 전부 [`data/cards.json`](data/cards.json)에 있습니다. 숫자나 문구를 바꾸면 바로 반영됩니다.
 효과를 적는 방법은 [`docs/card_format.md`](docs/card_format.md)를 보세요.
 
+## AI 난이도 비교
+```bash
+godot --headless --path . -s res://tests/ai_duel.gd -- 2 1 120   # 어려움 vs 보통 120판
+```
+커밋 메시지에 `[ai-tune]`을 넣으면 빌드 없이 이 대결만 GitHub에서 돌립니다 (`.github/workflows/ai_tune.yml`).
+
 ## 밸런스 시뮬레이션
 ```bash
 godot --headless --path . -s res://tests/sim.gd -- 500
