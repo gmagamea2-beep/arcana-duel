@@ -90,6 +90,9 @@ func _run() -> void:
 	await _run_combo(main)
 	main._on_level(1)
 	await _run_gacha(main)
+	await _run_multi(main, "ffa3", "18_ffa3")
+	await _run_multi(main, "2v2", "19_2v2")
+	main._on_mode("1v1")
 	print("UI 점검 완료")
 	quit()
 
@@ -259,3 +262,49 @@ func _drag_checks(battle, turn: int) -> void:
 				break
 	if turn == 2:
 		await _shot("drag_turn2")
+
+
+
+## 다인전 (AI 대전): 내 턴 몇 번을 화면 그대로 진행
+func _run_multi(main, m: String, shot_name: String) -> void:
+	main._on_mode(m)
+	main._on_level(1)
+	main._start_battle()
+	await _frames(10)
+	var battle = main.screen
+	battle.fast = true
+	battle._on_mull_confirm()
+	var game = battle.game
+	var helper := AI.new()
+	var my_turns := 0
+	var guard := 0
+	while game.phase == "play" and my_turns < 4 and guard < 6000:
+		guard += 1
+		if game.current == 0 and not battle.busy and not battle.overlay.visible:
+			var steps := 0
+			while game.phase == "play" and game.current == 0 and steps < 80:
+				var a: Dictionary = helper.choose_action(game, 0)
+				if a.get("type", "end") == "end":
+					break
+				if not battle._do(a):
+					print("UI 행동 실패: (다인전) ", a)
+					break
+				steps += 1
+				await _frames(1)
+			if game.phase != "play":
+				break
+			if my_turns == 2:
+				battle.fast = false
+				battle._refresh()
+				await _frames(20)
+				await _shot(shot_name)
+				battle.fast = true
+			battle._on_end_pressed()
+			my_turns += 1
+		await _frames(1)
+	var chips: int = battle.chips_box.get_child_count()
+	print("UI 다인전 점검 %s: 인원 %d, 칩 %d개, 내 턴 %d번, 상태 %s" % [m, game.players.size(), chips, my_turns, game.phase])
+	if chips != game.players.size() - 1 or my_turns < 2:
+		print("UI 행동 실패: 다인전 %s" % m)
+	battle.exit_to_menu.emit()
+	await _frames(5)

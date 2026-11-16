@@ -33,10 +33,11 @@ jobs:
       - name: Rules tests + simulation
         run: |
           ~/godot/godot --headless --path . --import 2>&1 | grep -A2 -E "SCRIPT ERROR|Parse Error" | head -40 || true
-          for f in core/player_state.gd core/game.gd ai/simple_ai.gd; do
+          for f in core/player_state.gd core/game.gd ai/simple_ai.gd ui/battle.gd ui/main.gd net/net_match.gd; do
             echo "== $f"; ~/godot/godot --headless --path . --check-only --script res://$f 2>&1 | grep -v "^Godot Engine\|^$" | head -20 || true
           done
           ~/godot/godot --headless --path . -s res://tests/rules_test.gd 2>&1 | grep -A1 -E "규칙 테스트|SCRIPT ERROR|Parse Error|ERROR" | head -60 || true
+          timeout 600 ~/godot/godot --headless --path . -s res://tests/ui_smoke.gd 2>&1 | grep -A2 -E "UI |SCRIPT ERROR|Parse Error" | head -60 || true
           ~/godot/godot --headless --path . -s res://tests/sim.gd -- 100 2>&1 | grep -E "시뮬레이션|선공|다인전|난이도 점검|SCRIPT ERROR|Parse Error|행동 실패" | head -40 || true
       - name: AI duels
         if: ${{ contains(github.event.head_commit.message, '[ai-tune]') }}
