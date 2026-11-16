@@ -135,7 +135,7 @@ func _compare_levels() -> void:
 	var norm := AI.new()
 	norm.level = 1
 	norm.rng.seed = 4
-	var n := 16
+	var n := 40
 	var hard_wins := 0
 	var done := 0
 	var t0 := Time.get_ticks_msec()

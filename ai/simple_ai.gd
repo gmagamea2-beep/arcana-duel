@@ -127,6 +127,9 @@ func _best_play(g, pi: int) -> Dictionary:
 			continue
 		var r := _score_card(g, pi, p.hand[i])
 		var s: float = r[0]
+		# 낼 수 없는 카드(대상 없음 등)는 실수로도 고르지 않는다
+		if s < 0.0 or (p.hand[i].data.has("target") and (r[1] as Dictionary).is_empty()):
+			continue
 		if level == 0:
 			s += rng.randf_range(-2.0, 2.0)
 		if s > best_s:
