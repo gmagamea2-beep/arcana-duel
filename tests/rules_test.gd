@@ -33,6 +33,8 @@ func _initialize() -> void:
 	test_ffa()
 	test_teams()
 	test_multi_effects()
+	test_aoe()
+	test_ironwall_nerf()
 	print("규칙 테스트: %d개 검사, 실패 %d개" % [checks, fails])
 	quit(1 if fails > 0 else 0)
 
@@ -411,3 +413,47 @@ func test_multi_effects() -> void:
 	var ally = put_unit(g2, 2, "C1")
 	put_hand(g2, 0, "F5")
 	check(g2.play_card(0, 0) and ally.health == 4, "아군 유닛은 광역 피해를 안 받음")
+
+
+
+func test_aoe() -> void:
+	var g := new_game()
+	var a = put_unit(g, 1, "C1")
+	var b = put_unit(g, 1, "S1")
+	var hp_before: int = g.players[1].hp
+	var hi := put_hand(g, 0, "AC3")
+	check(g.play_card(0, hi), "연쇄 번개")
+	var dealt: int = (hp_before - g.players[1].hp) + (4 - a.health if a.health > 0 else 4) + (3 - b.health if b.health > 0 else 3)
+	check(dealt >= 4 and dealt <= 6, "무작위 2 피해 3번 = 총 6 (보호막·죽음 제외 %d)" % dealt)
+	var c1 = g.clone()
+	var c2 = g.clone()
+	c1.players[0].hand.append(c1._make("AF3", 0))
+	c2.players[0].hand.append(c2._make("AF3", 0))
+	c1.play_card(0, c1.players[0].hand.size() - 1)
+	c2.play_card(0, c2.players[0].hand.size() - 1)
+	check(c1.state_hash() == c2.state_hash(), "무작위 피해도 같은 시드면 같은 결과 (온라인 동기화)")
+	var g2 := new_game()
+	var u1 = put_unit(g2, 1, "C1")
+	g2.players[1].hp = 25
+	var hi2 := put_hand(g2, 0, "AF2")
+	check(g2.play_card(0, hi2), "화염 파도")
+	check(u1.health == 2 and g2.players[1].hp == 23, "모든 적(영웅 포함) 2 피해")
+	var g3 := new_game()
+	var mine = put_unit(g3, 0, "C1")
+	var bomb = put_unit(g3, 1, "AC2")
+	var other = put_unit(g3, 1, "C1")
+	bomb.destroyed = true
+	g3._after_action()
+	check(mine.health == 2 and other.health == 2, "화약 수레 유언: 다른 모든 유닛 2 피해")
+
+
+func test_ironwall_nerf() -> void:
+	var g := new_game()
+	for i in 3:
+		put_unit(g, 0, "S1")
+	g._after_action()
+	check(not g.players[0].combos.has("ironwall"), "강철 진형: 도발 3명으로는 결성 안 됨")
+	put_unit(g, 0, "S3")
+	var armor: int = g.players[0].armor
+	g._after_action()
+	check(g.players[0].combos.has("ironwall") and g.players[0].armor == armor + 3, "도발 4명이면 결성, 방어도 +3")

@@ -302,31 +302,25 @@
    "need": [
     {
      "kw": "taunt",
-     "count": 3
+     "count": 4
     }
    ],
-   "cond": "도발 유닛 3명",
-   "form_text": "내 영웅 방어도 +5, 내 유닛 모두 체력 +1",
+   "cond": "도발 유닛 4명",
+   "form_text": "내 영웅 방어도 +3",
    "on_form": [
     {
      "do": "armor",
-     "amount": 5
-    },
-    {
-     "do": "buff",
-     "target": "my_units",
-     "atk": 0,
-     "hp": 1
+     "amount": 3
     }
    ],
    "skill": {
     "name": "철벽",
-    "cost": 1,
-    "text": "내 영웅 방어도 +3",
+    "cost": 2,
+    "text": "내 영웅 방어도 +2",
     "effects": [
      {
       "do": "armor",
-      "amount": 3
+      "amount": 2
      }
     ]
    }

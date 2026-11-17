@@ -38,7 +38,7 @@ const TEXT_KEYWORD_DESC := {
 	"이번 턴에만 마나": "남는 마나는 턴이 끝나면 사라집니다.",
 }
 
-const _INT_KEYS := ["cost", "attack", "health", "count", "trap_slots_bonus", "min_cost", "amount", "atk", "hp", "armor"]
+const _INT_KEYS := ["cost", "attack", "health", "count", "trap_slots_bonus", "min_cost", "amount", "atk", "hp", "armor", "times"]
 
 static var cards := {}
 static var starter: Array = []

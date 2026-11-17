@@ -65,7 +65,7 @@
 | `cancel_attack_freeze` | | (함정) 공격 취소 + 다음 턴 공격 불가 |
 
 ### target (누구에게)
-`chosen`(낼 때 고른 대상) · `self`(이 카드) · `enemy_hero` · `my_hero` · `all_enemy_units` · `all_enemies`(적 영웅 + 적 유닛) · `my_units` · `my_other_units` · `all_other_units` · `trigger_unit`(함정을 발동시킨 유닛) · `my_tag_units`(내 다른 유닛 중 `"tag"` 시리즈) · `combo_units`(조합에 든 유닛, 조합 효과에서만)
+`chosen`(낼 때 고른 대상) · `self`(이 카드) · `enemy_hero` · `my_hero` · `all_enemy_units` · `all_enemies`(적 영웅 + 적 유닛) · `my_units` · `my_other_units` · `all_other_units` · `trigger_unit`(함정을 발동시킨 유닛) · `random_enemy`(무작위 적 영웅·유닛, `"times"`번 반복) · `my_tag_units`(내 다른 유닛 중 `"tag"` 시리즈) · `combo_units`(조합에 든 유닛, 조합 효과에서만)
 
 ### 함정 trigger
 `enemy_attack_hero`(적 유닛이 내 영웅 공격) · `enemy_attack`(적 유닛 공격) · `enemy_spell`(상대 주문) · `enemy_unit_played`(상대 유닛 소환) · `enemy_buy`(상대 시장 구매)

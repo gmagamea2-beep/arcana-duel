@@ -927,8 +927,21 @@ func _apply(e: Dictionary, pi: int, src: CardInst, ctx: Dictionary) -> void:
 		amt *= tag_count(pi, e["per_tag"], src)
 	match e["do"]:
 		"damage":
-			for t in _resolve_targets(e.get("target", "chosen"), pi, src, ctx, e):
-				_damage(t, amt, null)
+			if e.get("target", "") == "random_enemy":
+				# 무작위 적(영웅 또는 유닛)에게 여러 번. 게임 난수를 써서 온라인에서도 모두 같은 결과
+				for k in int(e.get("times", 1)):
+					var pool: Array = []
+					for q in enemies(pi):
+						pool.append(players[q])
+						for u in players[q].board:
+							if not u.is_dead():
+								pool.append(u)
+					if pool.is_empty():
+						break
+					_damage(pool[rng.randi_range(0, pool.size() - 1)], amt, null)
+			else:
+				for t in _resolve_targets(e.get("target", "chosen"), pi, src, ctx, e):
+					_damage(t, amt, null)
 		"heal":
 			for t in _resolve_targets(e.get("target", "chosen"), pi, src, ctx, e):
 				_heal(t, amt)

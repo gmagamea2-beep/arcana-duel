@@ -236,6 +236,13 @@ func _score_card(g, pi: int, c: CardInst) -> Array:
 					for u in en_units:
 						net += unit_value(u) if _kills(amt, u) else amt * 0.4
 					s += net
+				elif spec == "all_enemies":
+					var net4 := 0.0
+					for u in en_units:
+						net4 += unit_value(u) if _kills(amt, u) else amt * 0.4
+					s += net4 + amt * 0.8 * ens.size()
+				elif spec == "random_enemy":
+					s += amt * int(e.get("times", 1)) * 0.9
 				elif spec == "all_other_units":
 					var net2 := 0.0
 					for u in en_units:
