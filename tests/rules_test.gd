@@ -423,7 +423,9 @@ func test_aoe() -> void:
 	var hp_before: int = g.players[1].hp
 	var hi := put_hand(g, 0, "AC3")
 	check(g.play_card(0, hi), "연쇄 번개")
-	var dealt: int = (hp_before - g.players[1].hp) + (4 - a.health if a.health > 0 else 4) + (3 - b.health if b.health > 0 else 3)
+	# 죽은 유닛은 버린 더미로 가며 체력이 원래대로 돌아가므로, 필드에 없으면 체력만큼 맞은 것으로 센다
+	var board: Array = g.players[1].board
+	var dealt: int = (hp_before - g.players[1].hp) + ((4 - a.health) if board.has(a) else 4) + ((3 - b.health) if board.has(b) else 3)
 	check(dealt >= 4 and dealt <= 6, "무작위 2 피해 3번 = 총 6 (보호막·죽음 제외 %d)" % dealt)
 	var c1 = g.clone()
 	var c2 = g.clone()
