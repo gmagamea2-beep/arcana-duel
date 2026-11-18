@@ -95,6 +95,7 @@ jobs:
           # 옛날 앱인 척 실행 → 직전 릴리스의 패치를 실제로 받아 적용해 본다
           ARCANA_UPDATE_TEST=1 timeout 120 ~/godot/godot --headless --path . --max-fps 60 --quit-after 1500 2>&1 | tee boot.log || true
           grep "부트 상태" boot.log || true
+          grep "패치 내용 확인" boot.log || echo "경고: 패치 내용을 확인하지 못함"
           if grep -E "SCRIPT ERROR|Parse Error" boot.log; then exit 1; fi
 
       - name: Export Windows (.exe)

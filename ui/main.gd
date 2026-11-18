@@ -243,6 +243,8 @@ func _add_update_row(v: VBoxContainer, st: Dictionary) -> void:
 		"failed":
 			text = "업데이트를 받지 못했어요. 다음에 켤 때 다시 시도해요"
 			col = Art.COL_TARGET
+	if st.has("error") and state in ["offline", "failed"]:
+		text += " (%s)" % str(st["error"])
 	if state == "need_install":
 		var row := HBoxContainer.new()
 		row.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -257,7 +259,85 @@ func _add_update_row(v: VBoxContainer, st: Dictionary) -> void:
 		row.add_child(b)
 		v.add_child(row)
 	elif text != "":
-		v.add_child(_label(text, 18, col))
+		var row2 := HBoxContainer.new()
+		row2.alignment = BoxContainer.ALIGNMENT_CENTER
+		row2.add_theme_constant_override("separation", 12)
+		var lbl := _label(text, 18, col)
+		row2.add_child(lbl)
+		var chk := Button.new()
+		chk.text = "업데이트 다시 확인"
+		chk.add_theme_font_size_override("font_size", 16)
+		chk.pressed.connect(_manual_update.bind(lbl, chk))
+		row2.add_child(chk)
+		var page := Button.new()
+		page.text = "최신 버전 직접 받기"
+		page.add_theme_font_size_override("font_size", 16)
+		page.pressed.connect(func(): OS.shell_open(RELEASES_PAGE))
+		row2.add_child(page)
+		v.add_child(row2)
+
+
+const RELEASES_PAGE := "https://github.com/gmagamea2-beep/arcana-duel/releases/latest"
+const LATEST_DL := "https://github.com/gmagamea2-beep/arcana-duel/releases/latest/download/"
+
+
+## 메뉴에서 직접 업데이트 확인: 새 패치를 받아 두면 다음에 켤 때 적용된다
+func _manual_update(lbl: Label, btn: Button) -> void:
+	btn.disabled = true
+	lbl.text = "업데이트 확인 중..."
+	lbl.add_theme_color_override("font_color", Art.COL_SUB)
+	var st: Dictionary = Engine.get_meta("update_status", {})
+	var current := int(st.get("current", 0))
+	var res := await _http_get(LATEST_DL + "version.json", "", 15.0)
+	if int(res[0]) != HTTPRequest.RESULT_SUCCESS or int(res[1]) != 200:
+		lbl.text = "확인 실패 (결과 %d, HTTP %d). 인터넷 연결을 확인하거나 [최신 버전 직접 받기]를 눌러 주세요" % [int(res[0]), int(res[1])]
+		lbl.add_theme_color_override("font_color", Art.COL_TARGET)
+		btn.disabled = false
+		return
+	var remote: Variant = JSON.parse_string((res[2] as PackedByteArray).get_string_from_utf8())
+	var rb := int(remote.get("build", 0)) if remote is Dictionary else 0
+	if rb <= current:
+		lbl.text = "최신 버전이에요 (빌드 %d)" % current
+		lbl.add_theme_color_override("font_color", Art.COL_OK)
+		btn.disabled = false
+		return
+	var v := Engine.get_version_info()
+	var eng := "%d.%d.%d" % [v["major"], v["minor"], v["patch"]]
+	if str(remote.get("engine", "")) != eng or int(remote.get("min_app_build", 0)) > int(st.get("app_build", 0)):
+		lbl.text = "새 버전(빌드 %d)은 앱을 새로 설치해야 해요. [최신 버전 직접 받기]를 눌러 주세요" % rb
+		lbl.add_theme_color_override("font_color", Art.COL_SEL)
+		btn.disabled = false
+		return
+	lbl.text = "빌드 %d 받는 중..." % rb
+	var path := "user://patch_%d.pck" % rb
+	var pack := "patch_android.pck" if OS.has_feature("android") else "patch_windows.pck"
+	var dl := await _http_get(LATEST_DL + pack, path, 300.0)
+	if int(dl[0]) != HTTPRequest.RESULT_SUCCESS or int(dl[1]) != 200 or not FileAccess.file_exists(path):
+		lbl.text = "패치 받기 실패 (결과 %d, HTTP %d)" % [int(dl[0]), int(dl[1])]
+		lbl.add_theme_color_override("font_color", Art.COL_TARGET)
+		btn.disabled = false
+		return
+	var f := FileAccess.open("user://patch.json", FileAccess.WRITE)
+	if f != null:
+		f.store_string(JSON.stringify({"build": rb, "engine": eng, "file": path}))
+		f.close()
+	lbl.text = "빌드 %d을(를) 받았어요! 앱을 완전히 껐다 켜면 적용돼요" % rb
+	lbl.add_theme_color_override("font_color", Art.COL_OK)
+
+
+## [결과, HTTP 코드, 본문]
+func _http_get(url: String, to_file: String, timeout: float) -> Array:
+	var req := HTTPRequest.new()
+	req.timeout = timeout
+	if to_file != "":
+		req.download_file = to_file
+	add_child(req)
+	if req.request(url) != OK:
+		req.queue_free()
+		return [HTTPRequest.RESULT_CANT_CONNECT, 0, PackedByteArray()]
+	var r: Array = await req.request_completed
+	req.queue_free()
+	return [int(r[0]), int(r[1]), r[3]]
 
 
 func _update_hero_panels() -> void:

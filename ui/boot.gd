@@ -13,6 +13,8 @@ const MAIN := "res://ui/main.tscn"
 var status: Label
 var bar: ProgressBar
 var _req: HTTPRequest = null
+## 마지막 실패 이유 (메뉴에 보여 줌)
+var _last_error := ""
 
 
 func _ready() -> void:
@@ -42,7 +44,15 @@ func _ready() -> void:
 		st["state"] = "dev"
 	else:
 		status.text = "업데이트 확인 중..."
-		var remote: Variant = await _get_json(LATEST + "version.json")
+		var remote: Variant = null
+		# 느린 모바일 망 대비: 3번까지 다시 시도
+		for attempt in 3:
+			remote = await _get_json(LATEST + "version.json")
+			if remote is Dictionary:
+				break
+			status.text = "업데이트 확인 중... (다시 시도 %d)" % (attempt + 1)
+		if not (remote is Dictionary):
+			st["error"] = _last_error
 		if remote is Dictionary:
 			var rb := int(remote.get("build", 0))
 			st["remote"] = rb
@@ -55,7 +65,15 @@ func _ready() -> void:
 				status.text = "새 업데이트 받는 중... (빌드 %d)" % rb
 				var path := "user://patch_%d.pck" % rb
 				var ok: bool = await _download(LATEST + _pack_name(), path)
-				if ok and ProjectSettings.load_resource_pack(path, true):
+				if not ok:
+					ok = await _download(LATEST + _pack_name(), path)
+				if ok and not ProjectSettings.load_resource_pack(path, true):
+					_last_error = "패치 파일을 적용하지 못함"
+					ok = false
+				if ok:
+					# 패치가 정말 들어갔는지: 이제 res://data/version.json 이 새 빌드여야 한다
+					var now_v := _read_json(FileAccess.get_file_as_string("res://data/version.json"))
+					print("패치 내용 확인: ", "일치" if int(now_v.get("build", 0)) == rb else "불일치 (%s)" % str(now_v))
 					_save_info({"build": rb, "engine": _engine(), "file": path})
 					_cleanup(path)
 					st["current"] = rb
@@ -64,6 +82,7 @@ func _ready() -> void:
 					await get_tree().create_timer(0.6).timeout
 				else:
 					st["state"] = "failed"
+					st["error"] = _last_error
 	Engine.set_meta("update_status", st)
 	print("부트 상태: ", st)
 	get_tree().change_scene_to_file.call_deferred(MAIN)
@@ -112,21 +131,23 @@ func _cleanup(keep: String) -> void:
 
 func _get_json(url: String) -> Variant:
 	var req := HTTPRequest.new()
-	req.timeout = 6.0
+	req.timeout = 15.0
 	add_child(req)
 	if req.request(url) != OK:
 		req.queue_free()
+		_last_error = "요청을 시작하지 못함"
 		return null
 	var res: Array = await req.request_completed
 	req.queue_free()
 	if int(res[0]) != HTTPRequest.RESULT_SUCCESS or int(res[1]) != 200:
+		_last_error = "버전 확인 실패 (결과 %d, HTTP %d)" % [int(res[0]), int(res[1])]
 		return null
 	return JSON.parse_string((res[3] as PackedByteArray).get_string_from_utf8())
 
 
 func _download(url: String, path: String) -> bool:
 	var req := HTTPRequest.new()
-	req.timeout = 120.0
+	req.timeout = 300.0
 	req.download_file = path
 	add_child(req)
 	_req = req
@@ -138,6 +159,8 @@ func _download(url: String, path: String) -> bool:
 	_req = null
 	req.queue_free()
 	var ok := int(res[0]) == HTTPRequest.RESULT_SUCCESS and int(res[1]) == 200 and FileAccess.file_exists(path)
+	if not ok:
+		_last_error = "패치 받기 실패 (결과 %d, HTTP %d)" % [int(res[0]), int(res[1])]
 	if not ok and FileAccess.file_exists(path):
 		DirAccess.remove_absolute(path)
 	return ok
