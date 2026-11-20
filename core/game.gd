@@ -203,7 +203,7 @@ func trap_slots(pi: int) -> int:
 
 func price(pi: int, card_id: String) -> int:
 	var d: Dictionary = CardDB.cards[card_id]
-	var pr: int = CardDB.RARITY_PRICE[d["rarity"]]
+	var pr: int = CardDB.RARITY_PRICE[d["rarity"]] + int(d.get("price_bonus", 0))
 	if d["faction"] == players[pi].faction:
 		pr -= 1
 	pr -= players[pi].buy_discount

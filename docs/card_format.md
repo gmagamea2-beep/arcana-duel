@@ -19,6 +19,8 @@
 | `icon` | game-icons 아이콘 이름 (`data/icons.json`에 있어야 함) | `"dragon-breath"` |
 | `effects` | 실제 효과 목록 (아래) | |
 
+`price_bonus`: 희귀도 기본 가격에 더하는 골드 (예: 1 → 1골드 비쌈)
+
 시장 가격과 등장 확률은 희귀도로 정해집니다 (`core/card_db.gd`의 `RARITY_PRICE`, `RARITY_WEIGHT`).
 
 ## effects

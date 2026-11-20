@@ -35,6 +35,7 @@ func _initialize() -> void:
 	test_multi_effects()
 	test_aoe()
 	test_ironwall_nerf()
+	test_balance_patch()
 	print("규칙 테스트: %d개 검사, 실패 %d개" % [checks, fails])
 	quit(1 if fails > 0 else 0)
 
@@ -459,3 +460,13 @@ func test_ironwall_nerf() -> void:
 	var armor: int = g.players[0].armor
 	g._after_action()
 	check(g.players[0].combos.has("ironwall") and g.players[0].armor == armor + 3, "도발 4명이면 결성, 방어도 +3")
+
+
+
+func test_balance_patch() -> void:
+	var g := new_game()
+	check(g.price(0, "RS3") == 4, "미스릴 골렘 구입가 4골드 (레어 3 + 1)")
+	check(g.price(1, "RS3") == 3, "강철 영웅은 1골드 할인 (3)")
+	check(CardDB.cards["RS3"]["cost"] == 5, "미스릴 골렘 5마나")
+	var hi := put_hand(g, 0, "AC5")
+	check(g.play_card(0, hi) and g.players[1].hp == 19, "종말의 운석우 6 피해")
