@@ -254,7 +254,7 @@ func test_lord_cards() -> void:
 	me.mana = 10
 	var hi2 := put_hand(g, 0, "LD7")
 	check(g.play_card(0, hi2), "만왕의 군주 내기")
-	check(op.hp == hp_before - 6, "다른 군주 2명 → 적 영웅 6 피해 (%d)" % (hp_before - op.hp))
+	check(op.hp == hp_before - 8, "다른 군주 2명 → 적 영웅 8 피해 (군주당 4, %d)" % (hp_before - op.hp))
 
 
 func test_mana_cards() -> void:
